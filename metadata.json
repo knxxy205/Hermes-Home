@@ -1,0 +1,6 @@
+{
+  "name": "TailHarness",
+  "description": "Homeserver manager over Tailscale with SSH Terminal, SFTP File Browser, Hermes AI Agent, and Keystore Encrypted Settings",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
