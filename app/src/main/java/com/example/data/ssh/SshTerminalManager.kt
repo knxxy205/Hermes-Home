@@ -25,8 +25,10 @@ sealed interface TerminalConnectionState {
 }
 
 class SshTerminalManager(
-    private val coroutineScope: CoroutineScope
+    externalScope: CoroutineScope? = null
 ) {
+    // Resilient IO scope that persists across tab switches and app pauses
+    private val coroutineScope = externalScope ?: CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     private var session: Session? = null
     private var channel: ChannelShell? = null
     private var outputStream: OutputStream? = null
@@ -71,6 +73,10 @@ class SshTerminalManager(
                 newSession.setPassword(config.sshPassword)
                 newSession.setConfig("StrictHostKeyChecking", "no")
                 newSession.setConfig("PreferredAuthentications", "password,keyboard-interactive")
+                newSession.setConfig("TCPKeepAlive", "yes")
+                newSession.serverAliveInterval = 10000 // Send keep-alive every 10 seconds
+                newSession.serverAliveCountMax = 10   // Allow up to 10 missed keep-alives
+                newSession.timeout = 0                // No socket read timeout
                 newSession.connect(15000)
 
                 val newChannel = newSession.openChannel("shell") as ChannelShell
@@ -102,9 +108,9 @@ class SshTerminalManager(
     private fun startReading(inputStream: InputStream) {
         readJob?.cancel()
         readJob = coroutineScope.launch(Dispatchers.IO) {
-            val buffer = ByteArray(2048)
+            val buffer = ByteArray(4096)
             try {
-                while (isActive && channel?.isConnected == true) {
+                while (isActive) {
                     val bytesRead = inputStream.read(buffer)
                     if (bytesRead > 0) {
                         val text = String(buffer, 0, bytesRead, Charsets.UTF_8)
@@ -114,10 +120,9 @@ class SshTerminalManager(
                     } else if (bytesRead == -1) {
                         break
                     }
-                    delay(20)
                 }
             } catch (_: Exception) {
-                // Channel closed
+                // Channel closed or network reset
             } finally {
                 withContext(Dispatchers.Main) {
                     if (_connectionState.value is TerminalConnectionState.Connected) {

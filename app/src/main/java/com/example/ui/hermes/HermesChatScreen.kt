@@ -29,7 +29,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.SmartToy
@@ -46,6 +48,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,20 +85,12 @@ import kotlinx.coroutines.launch
 fun HermesChatScreen(
     hermesClient: HermesApiClient,
     serverConfig: ServerConfig,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    messages: SnapshotStateList<ChatMessage> = remember { mutableStateListOf() }
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-
-    val messages = remember {
-        mutableStateListOf(
-            ChatMessage(
-                role = "assistant",
-                content = "Halo! Saya Hermes Agent di homeserver Anda. Terhubung melalui jaringan privat Tailscale.\nAda yang bisa saya bantu dengan server, container Docker, atau script hari ini?"
-            )
-        )
-    }
 
     var inputText by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
@@ -254,7 +249,7 @@ fun HermesChatScreen(
             }
         }
 
-        // Input Row Bar
+        // Input Row Bar with dedicated Paste and Clear buttons
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -262,7 +257,7 @@ fun HermesChatScreen(
                 .clip(RoundedCornerShape(16.dp))
                 .background(NavyDarkCard)
                 .border(1.dp, NavyDarkBorder, RoundedCornerShape(16.dp))
-                .padding(horizontal = 14.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             BasicTextField(
@@ -270,13 +265,14 @@ fun HermesChatScreen(
                 onValueChange = { inputText = it },
                 modifier = Modifier
                     .weight(1f)
+                    .padding(vertical = 4.dp)
                     .testTag("hermes_chat_input"),
                 textStyle = MaterialTheme.typography.bodyMedium.copy(
                     color = TextPrimary,
                     fontSize = 14.sp
                 ),
                 cursorBrush = SolidColor(BurntOrange),
-                maxLines = 4,
+                maxLines = 8,
                 decorationBox = { innerTextField ->
                     if (inputText.isEmpty()) {
                         Text(
@@ -289,14 +285,57 @@ fun HermesChatScreen(
                 }
             )
 
-            Spacer(modifier = Modifier.width(8.dp))
+            // Clear button when text exists
+            if (inputText.isNotEmpty()) {
+                IconButton(
+                    onClick = { inputText = "" },
+                    modifier = Modifier.size(30.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Clear input",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
 
+            // Dedicated PASTE button for 1-tap clipboard paste
+            IconButton(
+                onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+                    if (!clip.isNullOrBlank()) {
+                        inputText = if (inputText.isBlank()) clip else "$inputText\n$clip"
+                        Toast.makeText(context, "Ditempel dari clipboard", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Clipboard kosong", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(NavyDarkSurface)
+                    .border(1.dp, BurntOrange.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                    .testTag("hermes_paste_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ContentPaste,
+                    contentDescription = "Paste text",
+                    tint = BurntOrange,
+                    modifier = Modifier.size(17.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(6.dp))
+
+            // Send Button
             IconButton(
                 onClick = { doSendMessage(inputText) },
                 enabled = inputText.isNotBlank() && !isSending,
                 modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(if (inputText.isNotBlank() && !isSending) BurntOrange else BurntOrange.copy(alpha = 0.3f))
                     .testTag("hermes_send_button")
             ) {

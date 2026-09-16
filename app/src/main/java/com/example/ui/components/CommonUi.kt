@@ -108,14 +108,25 @@ fun TailHarnessCard(
     borderColor: Color = NavyCardBorder,
     content: @Composable () -> Unit
 ) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = backgroundColor,
-        border = BorderStroke(1.dp, borderColor),
-        onClick = onClick ?: {}
-    ) {
-        content()
+    if (onClick != null) {
+        Surface(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            color = backgroundColor,
+            border = BorderStroke(1.dp, borderColor),
+            onClick = onClick
+        ) {
+            content()
+        }
+    } else {
+        Surface(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            color = backgroundColor,
+            border = BorderStroke(1.dp, borderColor)
+        ) {
+            content()
+        }
     }
 }
 

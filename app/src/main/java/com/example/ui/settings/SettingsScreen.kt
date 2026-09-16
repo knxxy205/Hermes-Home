@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -20,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Key
@@ -62,6 +64,7 @@ import com.example.data.hermes.HermesApiClient
 import com.example.data.model.ServerConfig
 import com.example.data.security.EncryptedStorage
 import com.example.ui.components.CustomScreenHeader
+import com.example.ui.components.PillChip
 import com.example.ui.components.StatusBadge
 import com.example.ui.components.TailHarnessCard
 import com.example.ui.theme.BurntOrange
@@ -111,6 +114,9 @@ fun SettingsScreen(
 
     var isTestingHermes by remember { mutableStateOf(false) }
     var hermesTestResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+
+    var isDetectingModels by remember { mutableStateOf(false) }
+    var detectedModels by remember { mutableStateOf<List<String>>(emptyList()) }
 
     fun buildCurrentConfig(): ServerConfig {
         val parsedPort = portText.toIntOrNull() ?: 22
@@ -441,22 +447,125 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth().testTag("settings_hermes_url_input")
                     )
 
-                    // Model Name
-                    OutlinedTextField(
-                        value = hermesModel,
-                        onValueChange = { hermesModel = it },
-                        label = { Text("Nama Model", color = TextSecondary) },
-                        placeholder = { Text("hermes-3-llama-3.1-8b") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = BurntOrange,
-                            unfocusedBorderColor = NavyDarkBorder,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary,
-                            focusedLabelColor = BurntOrange
-                        ),
-                        modifier = Modifier.fillMaxWidth().testTag("settings_hermes_model_input")
-                    )
+                    // Model Name with Auto-Detect Feature
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(
+                            value = hermesModel,
+                            onValueChange = { hermesModel = it },
+                            label = { Text("Nama Model", color = TextSecondary) },
+                            placeholder = { Text("hermes-3-llama-3.1-8b / auto-detect") },
+                            singleLine = true,
+                            trailingIcon = {
+                                if (isDetectingModels) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
+                                        color = BurntOrange
+                                    )
+                                } else {
+                                    IconButton(
+                                        onClick = {
+                                            if (hermesUrl.isBlank()) {
+                                                Toast.makeText(context, "Isi Base URL API terlebih dahulu", Toast.LENGTH_SHORT).show()
+                                                return@IconButton
+                                            }
+                                            isDetectingModels = true
+                                            scope.launch {
+                                                val res = hermesClient.fetchAvailableModels(hermesUrl, hermesKey)
+                                                isDetectingModels = false
+                                                res.onSuccess { models ->
+                                                    if (models.isNotEmpty()) {
+                                                        detectedModels = models
+                                                        hermesModel = models.first()
+                                                        Toast.makeText(context, "Terdeteksi ${models.size} model: ${models.first()}", Toast.LENGTH_LONG).show()
+                                                    } else {
+                                                        Toast.makeText(context, "Tidak ada model ditemukan pada endpoint ini", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }.onFailure { err ->
+                                                    Toast.makeText(context, "Gagal deteksi: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
+                                                }
+                                            }
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = "Deteksi Model Otomatis",
+                                            tint = BurntOrange
+                                        )
+                                    }
+                                }
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BurntOrange,
+                                unfocusedBorderColor = NavyDarkBorder,
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary,
+                                focusedLabelColor = BurntOrange
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("settings_hermes_model_input")
+                        )
+
+                        // Auto-Detect Quick Action Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (detectedModels.isNotEmpty()) "Pilih model terdeteksi:" else "Bisa deteksi otomatis nama model dari server:",
+                                color = TextSecondary,
+                                fontSize = 11.sp
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    if (hermesUrl.isBlank()) {
+                                        Toast.makeText(context, "Isi Base URL API terlebih dahulu", Toast.LENGTH_SHORT).show()
+                                        return@OutlinedButton
+                                    }
+                                    isDetectingModels = true
+                                    scope.launch {
+                                        val res = hermesClient.fetchAvailableModels(hermesUrl, hermesKey)
+                                        isDetectingModels = false
+                                        res.onSuccess { models ->
+                                            if (models.isNotEmpty()) {
+                                                detectedModels = models
+                                                hermesModel = models.first()
+                                                Toast.makeText(context, "Terdeteksi ${models.size} model: ${models.first()}", Toast.LENGTH_LONG).show()
+                                            } else {
+                                                Toast.makeText(context, "Tidak ada model ditemukan", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }.onFailure { err ->
+                                            Toast.makeText(context, "Gagal deteksi: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.height(28.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = BurntOrange)
+                            ) {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(12.dp), tint = BurntOrange)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Deteksi Otomatis", fontSize = 11.sp, color = BurntOrange)
+                            }
+                        }
+
+                        if (detectedModels.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                detectedModels.forEach { modelName ->
+                                    PillChip(
+                                        label = modelName,
+                                        onClick = { hermesModel = modelName },
+                                        isSelected = hermesModel == modelName
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     // API Key (Bearer token)
                     OutlinedTextField(

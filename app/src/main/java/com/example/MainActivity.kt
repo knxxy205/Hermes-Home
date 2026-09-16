@@ -39,6 +39,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -46,12 +47,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import com.example.data.hermes.ChatMessage
 import com.example.data.hermes.HermesApiClient
 import com.example.data.security.EncryptedStorage
 import com.example.data.sftp.SftpManager
@@ -100,6 +104,7 @@ fun TailHarnessApp() {
     val terminalManager = remember { SshTerminalManager(coroutineScope) }
     val sftpManager = remember { SftpManager() }
     val hermesClient = remember { HermesApiClient() }
+    val hermesMessages = remember { mutableStateListOf<ChatMessage>() }
 
     var selectedTab by remember { mutableStateOf(AppTab.TERMINAL) }
 
@@ -119,40 +124,72 @@ fun TailHarnessApp() {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            AnimatedContent(
-                targetState = selectedTab,
-                transitionSpec = { fadeIn() togetherWith fadeOut() },
-                label = "TabContent"
-            ) { tab ->
-                when (tab) {
-                    AppTab.TERMINAL -> {
-                        TerminalScreen(
-                            terminalManager = terminalManager,
-                            serverConfig = serverConfig
-                        )
+            // Keep Terminal alive: SSH session, PTY buffer, and scroll NEVER disconnect on tab change
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(if (selectedTab == AppTab.TERMINAL) 1f else 0f)
+                    .graphicsLayer {
+                        alpha = if (selectedTab == AppTab.TERMINAL) 1f else 0f
+                        translationY = if (selectedTab == AppTab.TERMINAL) 0f else 99999f
                     }
-                    AppTab.FILES -> {
-                        FilesScreen(
-                            sftpManager = sftpManager,
-                            serverConfig = serverConfig
-                        )
+            ) {
+                TerminalScreen(
+                    terminalManager = terminalManager,
+                    serverConfig = serverConfig
+                )
+            }
+
+            // Keep Files alive: Directory location and loaded lists NEVER reset on tab change
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(if (selectedTab == AppTab.FILES) 1f else 0f)
+                    .graphicsLayer {
+                        alpha = if (selectedTab == AppTab.FILES) 1f else 0f
+                        translationY = if (selectedTab == AppTab.FILES) 0f else 99999f
                     }
-                    AppTab.HERMES -> {
-                        HermesChatScreen(
-                            hermesClient = hermesClient,
-                            serverConfig = serverConfig
-                        )
+            ) {
+                FilesScreen(
+                    sftpManager = sftpManager,
+                    serverConfig = serverConfig
+                )
+            }
+
+            // Keep Hermes Chat alive: Conversation history and user inputs NEVER reset on tab change
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(if (selectedTab == AppTab.HERMES) 1f else 0f)
+                    .graphicsLayer {
+                        alpha = if (selectedTab == AppTab.HERMES) 1f else 0f
+                        translationY = if (selectedTab == AppTab.HERMES) 0f else 99999f
                     }
-                    AppTab.SETTINGS -> {
-                        SettingsScreen(
-                            encryptedStorage = encryptedStorage,
-                            hermesClient = hermesClient,
-                            onConfigUpdated = { updatedConfig ->
-                                serverConfig = updatedConfig
-                            }
-                        )
+            ) {
+                HermesChatScreen(
+                    hermesClient = hermesClient,
+                    serverConfig = serverConfig,
+                    messages = hermesMessages
+                )
+            }
+
+            // Keep Settings alive: Form values and test outcomes stay intact
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(if (selectedTab == AppTab.SETTINGS) 1f else 0f)
+                    .graphicsLayer {
+                        alpha = if (selectedTab == AppTab.SETTINGS) 1f else 0f
+                        translationY = if (selectedTab == AppTab.SETTINGS) 0f else 99999f
                     }
-                }
+            ) {
+                SettingsScreen(
+                    encryptedStorage = encryptedStorage,
+                    hermesClient = hermesClient,
+                    onConfigUpdated = { updatedConfig ->
+                        serverConfig = updatedConfig
+                    }
+                )
             }
         }
     }

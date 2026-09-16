@@ -95,7 +95,7 @@ fun FilesScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var currentPath by remember { mutableStateOf("/home/admin") }
+    var currentPath by remember { mutableStateOf("/") }
     var fileList by remember { mutableStateOf<List<RemoteFileItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -637,9 +637,8 @@ fun FileItemCard(
     val iconTint = if (item.isDirectory) BurntOrange else TerminalCyan
 
     TailHarnessCard(
-        modifier = Modifier
-            .clickable { onOpen() }
-            .testTag("file_item_${item.name}"),
+        modifier = Modifier.testTag("file_item_${item.name}"),
+        onClick = onOpen,
         backgroundColor = NavyDarkCard,
         borderColor = NavyCardBorder
     ) {

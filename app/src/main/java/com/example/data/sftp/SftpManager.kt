@@ -47,6 +47,17 @@ class SftpManager {
 
     // Sandbox storage for testing without live server
     private val sandboxFiles = mutableMapOf<String, MutableList<RemoteFileItem>>(
+        "/" to mutableListOf(
+            RemoteFileItem("home", "/home", true, 4096, "drwxr-xr-x", System.currentTimeMillis() / 1000),
+            RemoteFileItem("etc", "/etc", true, 4096, "drwxr-xr-x", System.currentTimeMillis() / 1000),
+            RemoteFileItem("var", "/var", true, 4096, "drwxr-xr-x", System.currentTimeMillis() / 1000),
+            RemoteFileItem("mnt", "/mnt", true, 4096, "drwxr-xr-x", System.currentTimeMillis() / 1000),
+            RemoteFileItem("opt", "/opt", true, 4096, "drwxr-xr-x", System.currentTimeMillis() / 1000),
+            RemoteFileItem("root", "/root", true, 4096, "drwx------", System.currentTimeMillis() / 1000)
+        ),
+        "/home" to mutableListOf(
+            RemoteFileItem("admin", "/home/admin", true, 4096, "drwxr-xr-x", System.currentTimeMillis() / 1000)
+        ),
         "/home/admin" to mutableListOf(
             RemoteFileItem("docker", "/home/admin/docker", true, 4096, "drwxr-xr-x", System.currentTimeMillis() / 1000),
             RemoteFileItem("backups", "/home/admin/backups", true, 4096, "drwxr-xr-x", System.currentTimeMillis() / 1000 - 86400),

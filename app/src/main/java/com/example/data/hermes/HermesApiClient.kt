@@ -126,6 +126,78 @@ class HermesApiClient {
         }
     }
 
+    suspend fun fetchAvailableModels(baseUrl: String, apiKey: String = ""): Result<List<String>> =
+        fetchAvailableModels(ServerConfig(hermesBaseUrl = baseUrl, hermesApiKey = apiKey))
+
+    suspend fun fetchAvailableModels(config: ServerConfig): Result<List<String>> = withContext(Dispatchers.IO) {
+        if (config.hermesBaseUrl.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Base URL belum diisi"))
+        }
+
+        var cleanUrl = config.hermesBaseUrl.trim().trimEnd('/')
+        if (cleanUrl.endsWith("/v1/chat/completions")) {
+            cleanUrl = cleanUrl.removeSuffix("/v1/chat/completions")
+        } else if (cleanUrl.endsWith("/v1")) {
+            cleanUrl = cleanUrl.removeSuffix("/v1")
+        }
+
+        val modelsList = mutableListOf<String>()
+
+        // 1. Try OpenAI-compatible GET /v1/models
+        try {
+            val reqBuilder = Request.Builder()
+                .url("$cleanUrl/v1/models")
+                .get()
+            if (config.hermesApiKey.isNotBlank()) {
+                reqBuilder.addHeader("Authorization", "Bearer ${config.hermesApiKey}")
+            }
+            val resp = httpClient.newCall(reqBuilder.build()).execute()
+            if (resp.isSuccessful) {
+                val jsonStr = resp.body?.string() ?: ""
+                val json = JSONObject(jsonStr)
+                if (json.has("data")) {
+                    val dataArr = json.getJSONArray("data")
+                    for (i in 0 until dataArr.length()) {
+                        val item = dataArr.getJSONObject(i)
+                        val id = item.optString("id")
+                        if (id.isNotBlank()) modelsList.add(id)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        if (modelsList.isNotEmpty()) {
+            return@withContext Result.success(modelsList)
+        }
+
+        // 2. Try Ollama native GET /api/tags
+        try {
+            val req = Request.Builder()
+                .url("$cleanUrl/api/tags")
+                .get()
+                .build()
+            val resp = httpClient.newCall(req).execute()
+            if (resp.isSuccessful) {
+                val jsonStr = resp.body?.string() ?: ""
+                val json = JSONObject(jsonStr)
+                if (json.has("models")) {
+                    val modelsArr = json.getJSONArray("models")
+                    for (i in 0 until modelsArr.length()) {
+                        val item = modelsArr.getJSONObject(i)
+                        val name = item.optString("name")
+                        if (name.isNotBlank()) modelsList.add(name)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        if (modelsList.isNotEmpty()) {
+            Result.success(modelsList)
+        } else {
+            Result.failure(Exception("Tidak dapat menemukan daftar model di $cleanUrl/v1/models atau /api/tags. Pastikan host dan port benar."))
+        }
+    }
+
     suspend fun testConnection(config: ServerConfig): Result<String> = withContext(Dispatchers.IO) {
         val endpoint = normalizeEndpoint(config.hermesBaseUrl)
         val bodyJson = JSONObject().apply {

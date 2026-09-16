@@ -1,5 +1,6 @@
 package com.example.ui.terminal
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -23,6 +24,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
@@ -44,6 +47,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -65,6 +70,7 @@ import com.example.ui.theme.NavyCardBorder
 import com.example.ui.theme.NavyDarkBackground
 import com.example.ui.theme.NavyDarkBorder
 import com.example.ui.theme.NavyDarkCard
+import com.example.ui.theme.NavyDarkSurface
 import com.example.ui.theme.TerminalBg
 import com.example.ui.theme.TerminalGreen
 import com.example.ui.theme.TextPrimary
@@ -76,6 +82,8 @@ fun TerminalScreen(
     serverConfig: ServerConfig,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val connectionState by terminalManager.connectionState.collectAsState()
     val terminalRawOutput by terminalManager.terminalOutput.collectAsState()
     val verticalScrollState = rememberScrollState()
@@ -274,12 +282,21 @@ fun TerminalScreen(
             ShortcutKeyButton(label = "TAB", onClick = { terminalManager.sendKeyTab() })
             ShortcutKeyButton(label = "CTRL+C", onClick = { terminalManager.sendKeyCtrlC() })
             ShortcutKeyButton(label = "ALT", onClick = { terminalManager.sendKeyAlt() })
+            ShortcutKeyButton(label = "PASTE", onClick = {
+                val clipText = clipboardManager.getText()?.text
+                if (!clipText.isNullOrBlank()) {
+                    inputCommand = if (inputCommand.isBlank()) clipText else "$inputCommand $clipText"
+                    Toast.makeText(context, "Ditempel dari clipboard", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Clipboard kosong", Toast.LENGTH_SHORT).show()
+                }
+            })
             ShortcutKeyButton(label = "CLR", onClick = { terminalManager.clearBuffer() })
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Input Command Row
+        // Input Command Row with Paste Button and Responsive Multiline
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -287,7 +304,7 @@ fun TerminalScreen(
                 .clip(RoundedCornerShape(14.dp))
                 .background(NavyDarkCard)
                 .border(1.dp, NavyDarkBorder, RoundedCornerShape(14.dp))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -311,7 +328,7 @@ fun TerminalScreen(
                     fontSize = 14.sp
                 ),
                 cursorBrush = SolidColor(BurntOrange),
-                singleLine = true,
+                maxLines = 5,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(
                     onSend = {
@@ -324,7 +341,7 @@ fun TerminalScreen(
                 decorationBox = { innerTextField ->
                     if (inputCommand.isEmpty()) {
                         Text(
-                            text = "Ketik perintah Linux...",
+                            text = "Ketik atau paste perintah...",
                             color = TextSecondary.copy(alpha = 0.6f),
                             fontFamily = FontFamily.Monospace,
                             fontSize = 13.sp
@@ -334,6 +351,50 @@ fun TerminalScreen(
                 }
             )
 
+            // Clear button if text entered
+            if (inputCommand.isNotEmpty()) {
+                IconButton(
+                    onClick = { inputCommand = "" },
+                    modifier = Modifier.size(30.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Clear input",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            // Dedicated PASTE button for 1-tap clipboard paste
+            IconButton(
+                onClick = {
+                    val clipText = clipboardManager.getText()?.text
+                    if (!clipText.isNullOrBlank()) {
+                        inputCommand = if (inputCommand.isBlank()) clipText else "$inputCommand $clipText"
+                        Toast.makeText(context, "Ditempel dari clipboard", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Clipboard kosong", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(NavyDarkSurface)
+                    .border(1.dp, BurntOrange.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                    .testTag("terminal_paste_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ContentPaste,
+                    contentDescription = "Paste from clipboard",
+                    tint = BurntOrange,
+                    modifier = Modifier.size(17.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(6.dp))
+
+            // Send button
             IconButton(
                 onClick = {
                     if (inputCommand.isNotBlank()) {
@@ -341,10 +402,11 @@ fun TerminalScreen(
                         inputCommand = ""
                     }
                 },
+                enabled = inputCommand.isNotBlank(),
                 modifier = Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(BurntOrange)
+                    .background(if (inputCommand.isNotBlank()) BurntOrange else BurntOrange.copy(alpha = 0.3f))
                     .testTag("send_command_button")
             ) {
                 Icon(
