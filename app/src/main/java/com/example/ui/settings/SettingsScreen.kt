@@ -1,8 +1,10 @@
 package com.example.ui.settings
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,12 +23,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NetworkCheck
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
@@ -61,6 +67,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.hermes.HermesApiClient
+import com.example.data.model.ConnectionProfile
 import com.example.data.model.ServerConfig
 import com.example.data.security.EncryptedStorage
 import com.example.ui.components.CustomScreenHeader
@@ -96,18 +103,22 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
-    val currentConfig = remember { encryptedStorage.loadConfig() }
+    var profiles by remember { mutableStateOf(encryptedStorage.loadProfiles()) }
+    var activeProfileId by remember { mutableStateOf(encryptedStorage.getActiveProfileId()) }
 
-    var host by remember { mutableStateOf(currentConfig.sshHost) }
-    var portText by remember { mutableStateOf(currentConfig.sshPort.toString()) }
-    var user by remember { mutableStateOf(currentConfig.sshUser) }
-    var password by remember { mutableStateOf(currentConfig.sshPassword) }
+    val activeProfile = profiles.find { it.id == activeProfileId } ?: profiles.firstOrNull() ?: ConnectionProfile.defaultHomeProfile()
+
+    var profileName by remember(activeProfileId) { mutableStateOf(activeProfile.name) }
+    var host by remember(activeProfileId) { mutableStateOf(activeProfile.config.sshHost) }
+    var portText by remember(activeProfileId) { mutableStateOf(activeProfile.config.sshPort.toString()) }
+    var user by remember(activeProfileId) { mutableStateOf(activeProfile.config.sshUser) }
+    var password by remember(activeProfileId) { mutableStateOf(activeProfile.config.sshPassword) }
     var passwordVisible by remember { mutableStateOf(false) }
 
-    var hermesUrl by remember { mutableStateOf(currentConfig.hermesBaseUrl) }
-    var hermesKey by remember { mutableStateOf(currentConfig.hermesApiKey) }
+    var hermesUrl by remember(activeProfileId) { mutableStateOf(activeProfile.config.hermesBaseUrl) }
+    var hermesKey by remember(activeProfileId) { mutableStateOf(activeProfile.config.hermesApiKey) }
     var hermesKeyVisible by remember { mutableStateOf(false) }
-    var hermesModel by remember { mutableStateOf(currentConfig.hermesModel) }
+    var hermesModel by remember(activeProfileId) { mutableStateOf(activeProfile.config.hermesModel) }
 
     var isTestingSsh by remember { mutableStateOf(false) }
     var sshTestResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
@@ -131,11 +142,93 @@ fun SettingsScreen(
         )
     }
 
+    fun selectProfile(newId: String) {
+        if (newId == activeProfileId) return
+        // Auto-save current profile draft before switching
+        val currentDraft = activeProfile.copy(name = profileName.ifBlank { "Profil $activeProfileId" }, config = buildCurrentConfig())
+        encryptedStorage.saveProfile(currentDraft)
+
+        encryptedStorage.setActiveProfileId(newId)
+        activeProfileId = newId
+        profiles = encryptedStorage.loadProfiles()
+        val switched = profiles.find { it.id == newId } ?: profiles.first()
+        profileName = switched.name
+        host = switched.config.sshHost
+        portText = switched.config.sshPort.toString()
+        user = switched.config.sshUser
+        password = switched.config.sshPassword
+        hermesUrl = switched.config.hermesBaseUrl
+        hermesKey = switched.config.hermesApiKey
+        hermesModel = switched.config.hermesModel
+        sshTestResult = null
+        hermesTestResult = null
+        detectedModels = emptyList()
+
+        onConfigUpdated(switched.config)
+        Toast.makeText(context, "Beralih ke profil: ${switched.name}", Toast.LENGTH_SHORT).show()
+    }
+
+    fun addNewProfile() {
+        // Save current draft first
+        val currentDraft = activeProfile.copy(name = profileName.ifBlank { "Profil $activeProfileId" }, config = buildCurrentConfig())
+        encryptedStorage.saveProfile(currentDraft)
+
+        val newId = "profile_${System.currentTimeMillis()}"
+        val newProfile = ConnectionProfile(
+            id = newId,
+            name = "Profil Baru (${profiles.size + 1})",
+            config = ServerConfig(
+                sshHost = "192.168.1.1",
+                sshPort = 22,
+                sshUser = "admin",
+                sshPassword = "",
+                hermesBaseUrl = "http://192.168.1.1:11434",
+                hermesApiKey = "",
+                hermesModel = "hermes-3-llama-3.1-8b"
+            )
+        )
+        encryptedStorage.saveProfile(newProfile)
+        encryptedStorage.saveProfileIds(profiles.map { it.id } + newId)
+        profiles = encryptedStorage.loadProfiles()
+        selectProfile(newId)
+        Toast.makeText(context, "Profil baru ditambahkan", Toast.LENGTH_SHORT).show()
+    }
+
+    fun deleteCurrentProfile() {
+        if (profiles.size <= 1) {
+            Toast.makeText(context, "Minimal harus ada satu profil tersisa", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val toDelete = activeProfileId
+        val remaining = profiles.filter { it.id != toDelete }
+        encryptedStorage.deleteProfile(toDelete)
+        val nextId = remaining.first().id
+        encryptedStorage.setActiveProfileId(nextId)
+        activeProfileId = nextId
+        profiles = remaining
+        val next = remaining.first()
+        profileName = next.name
+        host = next.config.sshHost
+        portText = next.config.sshPort.toString()
+        user = next.config.sshUser
+        password = next.config.sshPassword
+        hermesUrl = next.config.hermesBaseUrl
+        hermesKey = next.config.hermesApiKey
+        hermesModel = next.config.hermesModel
+        sshTestResult = null
+        hermesTestResult = null
+        onConfigUpdated(next.config)
+        Toast.makeText(context, "Profil dihapus", Toast.LENGTH_SHORT).show()
+    }
+
     fun saveSettings() {
         val config = buildCurrentConfig()
+        val updatedProfile = activeProfile.copy(name = profileName.ifBlank { "Profil $activeProfileId" }, config = config)
+        encryptedStorage.saveProfile(updatedProfile)
         encryptedStorage.saveConfig(config)
+        profiles = encryptedStorage.loadProfiles()
         onConfigUpdated(config)
-        Toast.makeText(context, "Kredensial berhasil dienkripsi ke Keystore device!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Kredensial '${updatedProfile.name}' berhasil disimpan ke Keystore!", Toast.LENGTH_SHORT).show()
     }
 
     Column(
@@ -157,6 +250,135 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Profile Selector Card (Rumah LAN vs Di Luar Tailscale)
+            TailHarnessCard(
+                backgroundColor = NavyDarkCard,
+                borderColor = BurntOrange.copy(alpha = 0.5f)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Dns, contentDescription = null, tint = BurntOrange, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Profil Koneksi",
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
+                            )
+                        }
+                        StatusBadge(
+                            text = if (activeProfile.id == ConnectionProfile.PROFILE_HOME_ID) "LAN RUMAH" else if (activeProfile.id == ConnectionProfile.PROFILE_TAILSCALE_ID) "TAILSCALE" else "KUSTOM",
+                            isSuccess = true
+                        )
+                    }
+
+                    Text(
+                        text = "Simpan 2 profil kredensial terpisah: untuk di rumah (LAN) dan di luar via Tailscale VPN. Ganti profil dengan 1 sentuhan:",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
+
+                    // Profiles Horizontal Chips Bar
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        profiles.forEach { profile ->
+                            val isSelected = profile.id == activeProfileId
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSelected) BurntOrangeBadgeBg else NavyDarkSurface)
+                                    .border(
+                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                        color = if (isSelected) BurntOrange else NavyDarkBorder,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable { selectProfile(profile.id) }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (profile.id == ConnectionProfile.PROFILE_HOME_ID) Icons.Default.Home else Icons.Default.Public,
+                                    contentDescription = null,
+                                    tint = if (isSelected) BurntOrange else TextSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = profile.name,
+                                    color = if (isSelected) BurntOrange else TextSecondary,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+
+                        // Add Profile Button
+                        OutlinedButton(
+                            onClick = { addNewProfile() },
+                            modifier = Modifier.height(36.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = BurntOrange),
+                            border = BorderStroke(1.dp, BurntOrange.copy(alpha = 0.5f)),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = BurntOrange)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Tambah", fontSize = 12.sp, color = BurntOrange)
+                        }
+                    }
+
+                    // Edit Active Profile Name Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = profileName,
+                            onValueChange = { profileName = it },
+                            label = { Text("Label Profil Aktif", color = TextSecondary) },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BurntOrange,
+                                unfocusedBorderColor = NavyDarkBorder,
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary,
+                                focusedLabelColor = BurntOrange
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        if (profiles.size > 1) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            IconButton(
+                                onClick = { deleteCurrentProfile() },
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(NavyDarkSurface)
+                                    .border(1.dp, TerminalRed.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                            ) {
+                                Icon(Icons.Default.DeleteOutline, contentDescription = "Hapus Profil", tint = TerminalRed)
+                            }
+                        }
+                    }
+                }
+            }
             // Security Info Card (Android Keystore + Hardware-backed encryption)
             TailHarnessCard(
                 backgroundColor = NavyDarkCard,
@@ -505,51 +727,70 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth().testTag("settings_hermes_model_input")
                         )
 
-                        // Auto-Detect Quick Action Row
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = if (detectedModels.isNotEmpty()) "Pilih model terdeteksi:" else "Bisa deteksi otomatis nama model dari server:",
-                                color = TextSecondary,
-                                fontSize = 11.sp
-                            )
-                            OutlinedButton(
-                                onClick = {
-                                    if (hermesUrl.isBlank()) {
-                                        Toast.makeText(context, "Isi Base URL API terlebih dahulu", Toast.LENGTH_SHORT).show()
-                                        return@OutlinedButton
-                                    }
-                                    isDetectingModels = true
-                                    scope.launch {
-                                        val res = hermesClient.fetchAvailableModels(hermesUrl, hermesKey)
-                                        isDetectingModels = false
-                                        res.onSuccess { models ->
-                                            if (models.isNotEmpty()) {
-                                                detectedModels = models
+                        // Auto-Detect Action Button for 9router / Ollama / vLLM
+                        OutlinedButton(
+                            onClick = {
+                                if (hermesUrl.isBlank()) {
+                                    Toast.makeText(context, "Isi Base URL API terlebih dahulu", Toast.LENGTH_SHORT).show()
+                                    return@OutlinedButton
+                                }
+                                isDetectingModels = true
+                                scope.launch {
+                                    val res = hermesClient.fetchAvailableModels(hermesUrl, hermesKey)
+                                    isDetectingModels = false
+                                    res.onSuccess { models ->
+                                        if (models.isNotEmpty()) {
+                                            detectedModels = models
+                                            if (hermesModel.isBlank() || hermesModel !in models) {
                                                 hermesModel = models.first()
-                                                Toast.makeText(context, "Terdeteksi ${models.size} model: ${models.first()}", Toast.LENGTH_LONG).show()
-                                            } else {
-                                                Toast.makeText(context, "Tidak ada model ditemukan", Toast.LENGTH_SHORT).show()
                                             }
-                                        }.onFailure { err ->
-                                            Toast.makeText(context, "Gagal deteksi: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "Berhasil deteksi ${models.size} model di 9router/server!", Toast.LENGTH_LONG).show()
+                                        } else {
+                                            Toast.makeText(context, "Tidak ada model ditemukan pada endpoint ini", Toast.LENGTH_SHORT).show()
                                         }
+                                    }.onFailure { err ->
+                                        Toast.makeText(context, "Gagal deteksi: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
                                     }
-                                },
-                                modifier = Modifier.height(28.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = BurntOrange)
-                            ) {
-                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(12.dp), tint = BurntOrange)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Deteksi Otomatis", fontSize = 11.sp, color = BurntOrange)
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(42.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = BurntOrange),
+                            border = BorderStroke(1.dp, BurntOrange.copy(alpha = 0.6f)),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                            enabled = !isDetectingModels
+                        ) {
+                            if (isDetectingModels) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = BurntOrange
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Memindai 9router / Ollama / vLLM...", fontSize = 12.sp, color = BurntOrange)
+                            } else {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp), tint = BurntOrange)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Deteksi Otomatis Model (9router / Ollama)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BurntOrange)
                             }
                         }
 
+                        Text(
+                            text = "Mendukung auto-detect 9router, Ollama (/api/tags), vLLM (/v1/models), LiteLLM, dan reverse proxy.",
+                            color = TextSecondary.copy(alpha = 0.7f),
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp
+                        )
+
                         if (detectedModels.isNotEmpty()) {
+                            Text(
+                                text = "Model Ditemukan (${detectedModels.size}) - Ketuk untuk memilih:",
+                                color = TextPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -559,7 +800,10 @@ fun SettingsScreen(
                                 detectedModels.forEach { modelName ->
                                     PillChip(
                                         label = modelName,
-                                        onClick = { hermesModel = modelName },
+                                        onClick = {
+                                            hermesModel = modelName
+                                            Toast.makeText(context, "Model dipilih: $modelName", Toast.LENGTH_SHORT).show()
+                                        },
                                         isSelected = hermesModel == modelName
                                     )
                                 }

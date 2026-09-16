@@ -169,6 +169,10 @@ fun TailHarnessApp() {
                 HermesChatScreen(
                     hermesClient = hermesClient,
                     serverConfig = serverConfig,
+                    encryptedStorage = encryptedStorage,
+                    onConfigUpdated = { updatedConfig ->
+                        serverConfig = updatedConfig
+                    },
                     messages = hermesMessages
                 )
             }

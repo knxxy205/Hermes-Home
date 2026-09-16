@@ -17,8 +17,23 @@ data class ChatMessage(
     val role: String, // "user" or "assistant" or "system"
     val content: String,
     val timestamp: Long = System.currentTimeMillis(),
-    val isError: Boolean = false
+    val isError: Boolean = false,
+    val interactiveActions: List<String> = emptyList(),
+    val actionType: String? = null
 )
+
+data class HermesChatSession(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String = "Obrolan Baru",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val messages: List<ChatMessage> = emptyList()
+) {
+    fun previewText(): String {
+        val lastMsg = messages.lastOrNull { it.role != "system" }
+        return lastMsg?.content?.take(60) ?: "Belum ada pesan"
+    }
+}
 
 class HermesApiClient {
 
@@ -126,6 +141,54 @@ class HermesApiClient {
         }
     }
 
+    private fun extractModelNames(jsonStr: String): List<String> {
+        val names = mutableListOf<String>()
+        val trimmed = jsonStr.trim()
+        try {
+            if (trimmed.startsWith("[")) {
+                val array = JSONArray(trimmed)
+                for (i in 0 until array.length()) {
+                    val item = array.opt(i)
+                    when (item) {
+                        is String -> if (item.isNotBlank()) names.add(item)
+                        is JSONObject -> {
+                            val id = item.optString("id").ifBlank {
+                                item.optString("name").ifBlank { item.optString("model") }
+                            }
+                            if (id.isNotBlank()) names.add(id)
+                        }
+                    }
+                }
+            } else if (trimmed.startsWith("{")) {
+                val obj = JSONObject(trimmed)
+                val candidateArrays = listOf("data", "models", "items", "list")
+                for (key in candidateArrays) {
+                    if (obj.has(key)) {
+                        val arr = obj.optJSONArray(key) ?: continue
+                        for (i in 0 until arr.length()) {
+                            val item = arr.opt(i)
+                            when (item) {
+                                is String -> if (item.isNotBlank()) names.add(item)
+                                is JSONObject -> {
+                                    val id = item.optString("id").ifBlank {
+                                        item.optString("name").ifBlank {
+                                            item.optString("model").ifBlank {
+                                                item.optString("model_name")
+                                            }
+                                        }
+                                    }
+                                    if (id.isNotBlank()) names.add(id)
+                                }
+                            }
+                        }
+                        if (names.isNotEmpty()) break
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return names.distinct()
+    }
+
     suspend fun fetchAvailableModels(baseUrl: String, apiKey: String = ""): Result<List<String>> =
         fetchAvailableModels(ServerConfig(hermesBaseUrl = baseUrl, hermesApiKey = apiKey))
 
@@ -141,60 +204,45 @@ class HermesApiClient {
             cleanUrl = cleanUrl.removeSuffix("/v1")
         }
 
-        val modelsList = mutableListOf<String>()
+        // Candidate endpoints covering 9router, OpenAI, Ollama, vLLM, LiteLLM, LMDeploy
+        val candidateEndpoints = listOf(
+            "$cleanUrl/v1/models",
+            "$cleanUrl/models",
+            "$cleanUrl/api/v1/models",
+            "$cleanUrl/api/tags",
+            "$cleanUrl/api/models",
+            "$cleanUrl/api/ps"
+        )
 
-        // 1. Try OpenAI-compatible GET /v1/models
-        try {
-            val reqBuilder = Request.Builder()
-                .url("$cleanUrl/v1/models")
-                .get()
-            if (config.hermesApiKey.isNotBlank()) {
-                reqBuilder.addHeader("Authorization", "Bearer ${config.hermesApiKey}")
-            }
-            val resp = httpClient.newCall(reqBuilder.build()).execute()
-            if (resp.isSuccessful) {
-                val jsonStr = resp.body?.string() ?: ""
-                val json = JSONObject(jsonStr)
-                if (json.has("data")) {
-                    val dataArr = json.getJSONArray("data")
-                    for (i in 0 until dataArr.length()) {
-                        val item = dataArr.getJSONObject(i)
-                        val id = item.optString("id")
-                        if (id.isNotBlank()) modelsList.add(id)
+        val discovered = mutableListOf<String>()
+
+        for (endpoint in candidateEndpoints) {
+            try {
+                val reqBuilder = Request.Builder()
+                    .url(endpoint)
+                    .get()
+                if (config.hermesApiKey.isNotBlank()) {
+                    reqBuilder.addHeader("Authorization", "Bearer ${config.hermesApiKey}")
+                }
+                val resp = httpClient.newCall(reqBuilder.build()).execute()
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: ""
+                    val models = extractModelNames(body)
+                    if (models.isNotEmpty()) {
+                        discovered.addAll(models)
+                        break // Found working endpoint with valid models
                     }
                 }
+            } catch (_: Exception) {
+                // Continue to next candidate endpoint
             }
-        } catch (_: Exception) {}
-
-        if (modelsList.isNotEmpty()) {
-            return@withContext Result.success(modelsList)
         }
 
-        // 2. Try Ollama native GET /api/tags
-        try {
-            val req = Request.Builder()
-                .url("$cleanUrl/api/tags")
-                .get()
-                .build()
-            val resp = httpClient.newCall(req).execute()
-            if (resp.isSuccessful) {
-                val jsonStr = resp.body?.string() ?: ""
-                val json = JSONObject(jsonStr)
-                if (json.has("models")) {
-                    val modelsArr = json.getJSONArray("models")
-                    for (i in 0 until modelsArr.length()) {
-                        val item = modelsArr.getJSONObject(i)
-                        val name = item.optString("name")
-                        if (name.isNotBlank()) modelsList.add(name)
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-
-        if (modelsList.isNotEmpty()) {
-            Result.success(modelsList)
+        val uniqueModels = discovered.distinct()
+        if (uniqueModels.isNotEmpty()) {
+            Result.success(uniqueModels)
         } else {
-            Result.failure(Exception("Tidak dapat menemukan daftar model di $cleanUrl/v1/models atau /api/tags. Pastikan host dan port benar."))
+            Result.failure(Exception("Tidak dapat menemukan daftar model di 9router/server ($cleanUrl). Pastikan host dan port benar."))
         }
     }
 

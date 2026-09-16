@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -296,105 +297,110 @@ fun TerminalScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Input Command Row with Paste Button and Responsive Multiline
+        // Input Command Row: Modern Pill Layout with Standalone Circular Send Button
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(NavyDarkCard)
-                .border(1.dp, NavyDarkBorder, RoundedCornerShape(14.dp))
-                .padding(horizontal = 10.dp, vertical = 6.dp),
+                .padding(horizontal = 14.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "$ ",
-                color = TerminalGreen,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 15.sp
-            )
-
-            BasicTextField(
-                value = inputCommand,
-                onValueChange = { inputCommand = it },
+            // Pill Container
+            Row(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 6.dp)
-                    .testTag("terminal_command_input"),
-                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                    color = TextPrimary,
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(NavyDarkCard)
+                    .border(1.dp, NavyDarkBorder, RoundedCornerShape(24.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "$ ",
+                    color = TerminalGreen,
+                    fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 14.sp
-                ),
-                cursorBrush = SolidColor(BurntOrange),
-                maxLines = 5,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(
-                    onSend = {
-                        if (inputCommand.isNotBlank()) {
-                            terminalManager.sendCommand(inputCommand)
-                            inputCommand = ""
+                    fontSize = 15.sp,
+                    modifier = Modifier.padding(start = 2.dp)
+                )
+
+                BasicTextField(
+                    value = inputCommand,
+                    onValueChange = { inputCommand = it },
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                        .testTag("terminal_command_input"),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        color = TextPrimary,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 14.sp
+                    ),
+                    cursorBrush = SolidColor(BurntOrange),
+                    maxLines = 5,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(
+                        onSend = {
+                            if (inputCommand.isNotBlank()) {
+                                terminalManager.sendCommand(inputCommand)
+                                inputCommand = ""
+                            }
                         }
+                    ),
+                    decorationBox = { innerTextField ->
+                        if (inputCommand.isEmpty()) {
+                            Text(
+                                text = "Ketik perintah...",
+                                color = TextSecondary.copy(alpha = 0.55f),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp
+                            )
+                        }
+                        innerTextField()
                     }
-                ),
-                decorationBox = { innerTextField ->
-                    if (inputCommand.isEmpty()) {
-                        Text(
-                            text = "Ketik atau paste perintah...",
-                            color = TextSecondary.copy(alpha = 0.6f),
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 13.sp
+                )
+
+                // Clean inline Paste button if input is empty
+                if (inputCommand.isEmpty()) {
+                    IconButton(
+                        onClick = {
+                            val clipText = clipboardManager.getText()?.text
+                            if (!clipText.isNullOrBlank()) {
+                                inputCommand = clipText
+                                Toast.makeText(context, "Ditempel dari clipboard", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Clipboard kosong", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier
+                            .size(32.dp)
+                            .testTag("terminal_paste_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentPaste,
+                            contentDescription = "Paste from clipboard",
+                            tint = BurntOrange,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
-                    innerTextField()
-                }
-            )
-
-            // Clear button if text entered
-            if (inputCommand.isNotEmpty()) {
-                IconButton(
-                    onClick = { inputCommand = "" },
-                    modifier = Modifier.size(30.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Clear input",
-                        tint = TextSecondary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-
-            // Dedicated PASTE button for 1-tap clipboard paste
-            IconButton(
-                onClick = {
-                    val clipText = clipboardManager.getText()?.text
-                    if (!clipText.isNullOrBlank()) {
-                        inputCommand = if (inputCommand.isBlank()) clipText else "$inputCommand $clipText"
-                        Toast.makeText(context, "Ditempel dari clipboard", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(context, "Clipboard kosong", Toast.LENGTH_SHORT).show()
+                } else {
+                    // Clean Clear button if text entered
+                    IconButton(
+                        onClick = { inputCommand = "" },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Clear input",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
-                },
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(NavyDarkSurface)
-                    .border(1.dp, BurntOrange.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-                    .testTag("terminal_paste_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ContentPaste,
-                    contentDescription = "Paste from clipboard",
-                    tint = BurntOrange,
-                    modifier = Modifier.size(17.dp)
-                )
+                }
             }
 
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
-            // Send button
+            // Standalone Circular Send Button
             IconButton(
                 onClick = {
                     if (inputCommand.isNotBlank()) {
@@ -404,20 +410,20 @@ fun TerminalScreen(
                 },
                 enabled = inputCommand.isNotBlank(),
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(if (inputCommand.isNotBlank()) BurntOrange else BurntOrange.copy(alpha = 0.3f))
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(if (inputCommand.isNotBlank()) BurntOrange else BurntOrange.copy(alpha = 0.25f))
                     .testTag("send_command_button")
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Send,
                     contentDescription = "Send",
-                    tint = NavyDarkBackground,
-                    modifier = Modifier.size(18.dp)
+                    tint = if (inputCommand.isNotBlank()) NavyDarkBackground else TextSecondary,
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(4.dp))
     }
 }
