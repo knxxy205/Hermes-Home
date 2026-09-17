@@ -20,27 +20,38 @@ object AnsiTerminalParser {
     private val ColorDarkGray = Color(0xFF64748B)
 
     fun parse(rawText: String): AnnotatedString {
-        if (!rawText.contains("\u001B[")) {
+        if (!rawText.contains("\u001B")) {
             return AnnotatedString(rawText)
         }
+
+        // Clean out VT100 non-SGR sequences first:
+        // ESC ( B, ESC ) 0, ESC =, ESC >, ESC 7, ESC 8, ESC M, etc.
+        val preCleaned = rawText
+            .replace(Regex("\u001B[()][0-9A-Za-z]"), "")
+            .replace(Regex("\u001B[=>78Mc]"), "")
+            .replace(Regex("\u001B\\][^\u0007\u001B]*[\u0007\u001B\\\\]"), "")
 
         return buildAnnotatedString {
             var currentColor = ColorDefault
             var currentBold = false
+            var currentInverse = false
 
             // Regex matches ESC[<codes>m
             val regex = Regex("\u001B\\[([0-9;]*)m")
             var lastIndex = 0
 
-            for (match in regex.findAll(rawText)) {
-                val textBefore = rawText.substring(lastIndex, match.range.first)
+            for (match in regex.findAll(preCleaned)) {
+                val textBefore = preCleaned.substring(lastIndex, match.range.first)
                 if (textBefore.isNotEmpty()) {
-                    // Filter out cursor/screen clear control codes like \u001b[?25h, \u001b[K, etc.
+                    // Filter out cursor/screen clear control codes like \u001b[?25h, \u001b[K, \u001b[2J, etc.
                     val cleanedText = textBefore.replace(Regex("\u001B\\[[0-9;?]*[A-Za-z]"), "")
                     if (cleanedText.isNotEmpty()) {
+                        val effectiveFg = if (currentInverse) Color(0xFF05080E) else currentColor
+                        val effectiveBg = if (currentInverse) Color(0xFFCBD5E1) else Color.Transparent
                         withStyle(
                             SpanStyle(
-                                color = currentColor,
+                                color = effectiveFg,
+                                background = effectiveBg,
                                 fontWeight = if (currentBold) FontWeight.Bold else FontWeight.Normal
                             )
                         ) {
@@ -53,6 +64,7 @@ object AnsiTerminalParser {
                 if (codes.isEmpty() || codes.contains(0)) {
                     currentColor = ColorDefault
                     currentBold = false
+                    currentInverse = false
                 }
 
                 for (code in codes) {
@@ -60,9 +72,12 @@ object AnsiTerminalParser {
                         0 -> {
                             currentColor = ColorDefault
                             currentBold = false
+                            currentInverse = false
                         }
                         1 -> currentBold = true
                         2, 22 -> currentBold = false
+                        7 -> currentInverse = true
+                        27 -> currentInverse = false
                         30 -> currentColor = ColorDarkGray
                         31, 91 -> currentColor = ColorRed
                         32, 92 -> currentColor = ColorGreen
@@ -79,13 +94,16 @@ object AnsiTerminalParser {
                 lastIndex = match.range.last + 1
             }
 
-            if (lastIndex < rawText.length) {
-                val remaining = rawText.substring(lastIndex)
+            if (lastIndex < preCleaned.length) {
+                val remaining = preCleaned.substring(lastIndex)
                     .replace(Regex("\u001B\\[[0-9;?]*[A-Za-z]"), "")
                 if (remaining.isNotEmpty()) {
+                    val effectiveFg = if (currentInverse) Color(0xFF05080E) else currentColor
+                    val effectiveBg = if (currentInverse) Color(0xFFCBD5E1) else Color.Transparent
                     withStyle(
                         SpanStyle(
-                            color = currentColor,
+                            color = effectiveFg,
+                            background = effectiveBg,
                             fontWeight = if (currentBold) FontWeight.Bold else FontWeight.Normal
                         )
                     ) {

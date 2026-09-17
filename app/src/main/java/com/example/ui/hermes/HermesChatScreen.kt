@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
@@ -108,6 +109,7 @@ fun HermesChatScreen(
     serverConfig: ServerConfig,
     encryptedStorage: EncryptedStorage? = null,
     onConfigUpdated: ((ServerConfig) -> Unit)? = null,
+    onExecuteInTerminal: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
     messages: SnapshotStateList<ChatMessage> = remember { mutableStateListOf() }
 ) {
@@ -567,7 +569,8 @@ fun HermesChatScreen(
                     onCopy = { copyToClipboard(msg.content) },
                     onActionClick = { actionType, value ->
                         handleInteractiveAction(actionType, value)
-                    }
+                    },
+                    onExecuteInTerminal = onExecuteInTerminal
                 )
             }
 
@@ -958,7 +961,8 @@ fun ChatMessageItem(
     message: ChatMessage,
     currentModel: String = "",
     onCopy: () -> Unit,
-    onActionClick: (String?, String) -> Unit = { _, _ -> }
+    onActionClick: (String?, String) -> Unit = { _, _ -> },
+    onExecuteInTerminal: ((String) -> Unit)? = null
 ) {
     val isUser = message.role == "user"
 
@@ -1022,7 +1026,10 @@ fun ChatMessageItem(
                         // Render text with code block highlighting if content contains markdown code blocks
                         val content = message.content
                         if (content.contains("```")) {
-                            FormattedCodeAndTextMessage(content)
+                            FormattedCodeAndTextMessage(
+                                rawContent = content,
+                                onExecuteInTerminal = onExecuteInTerminal
+                            )
                         } else {
                             Text(
                                 text = content,
@@ -1123,7 +1130,11 @@ fun ChatMessageItem(
 }
 
 @Composable
-fun FormattedCodeAndTextMessage(rawContent: String) {
+fun FormattedCodeAndTextMessage(
+    rawContent: String,
+    onExecuteInTerminal: ((String) -> Unit)? = null
+) {
+    val context = LocalContext.current
     val segments = remember(rawContent) {
         rawContent.split("```")
     }
@@ -1140,6 +1151,7 @@ fun FormattedCodeAndTextMessage(rawContent: String) {
                 val code = if (lang.isNotEmpty() && !lang.contains(" ")) {
                     lines.drop(1).joinToString("\n")
                 } else part
+                val cleanCode = code.trim()
 
                 Column(
                     modifier = Modifier
@@ -1149,18 +1161,85 @@ fun FormattedCodeAndTextMessage(rawContent: String) {
                         .border(1.dp, NavyDarkBorder, RoundedCornerShape(8.dp))
                         .padding(8.dp)
                 ) {
-                    if (lang.isNotEmpty()) {
+                    // Header bar with Language tag and Action Buttons
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
                         Text(
-                            text = lang.uppercase(),
+                            text = if (lang.isNotEmpty()) lang.uppercase() else "BASH / CLI",
                             color = BurntOrange,
-                            fontSize = 10.sp,
+                            fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            // Copy Code button
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(NavyDarkSurface)
+                                    .border(1.dp, NavyDarkBorder, RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Code", cleanCode))
+                                        Toast.makeText(context, "Kode disalin", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.ContentCopy,
+                                        contentDescription = "Salin Kode",
+                                        tint = TextSecondary,
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text("Salin", color = TextSecondary, fontSize = 10.sp)
+                                }
+                            }
+
+                            // Run in Terminal button
+                            if (onExecuteInTerminal != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(BurntOrangePillBg)
+                                        .border(1.dp, BurntOrangeBorder, RoundedCornerShape(6.dp))
+                                        .clickable {
+                                            onExecuteInTerminal(cleanCode)
+                                        }
+                                        .padding(horizontal = 7.dp, vertical = 3.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Default.PlayArrow,
+                                            contentDescription = "Jalankan di Terminal",
+                                            tint = BurntOrange,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            "Jalankan di Terminal",
+                                            color = BurntOrange,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
+
                     Text(
-                        text = code.trim(),
+                        text = cleanCode,
                         color = TerminalGreen,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,

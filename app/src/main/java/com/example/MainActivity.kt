@@ -1,6 +1,7 @@
 package com.example
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -60,6 +61,8 @@ import com.example.data.hermes.HermesApiClient
 import com.example.data.security.EncryptedStorage
 import com.example.data.sftp.SftpManager
 import com.example.data.ssh.SshTerminalManager
+import com.example.data.ssh.TerminalConnectionState
+import kotlinx.coroutines.launch
 import com.example.ui.files.FilesScreen
 import com.example.ui.hermes.HermesChatScreen
 import com.example.ui.settings.SettingsScreen
@@ -108,6 +111,46 @@ fun TailHarnessApp() {
 
     var selectedTab by remember { mutableStateOf(AppTab.TERMINAL) }
 
+    // Cross-Integration Handler: Execute CLI command from Hermes directly in Terminal
+    val handleExecuteInTerminal: (String) -> Unit = { command ->
+        val active = terminalManager.activeSession.value
+        if (active.connectionState.value !is TerminalConnectionState.Connected) {
+            if (serverConfig.isSshConfigured) {
+                active.connect(serverConfig)
+            } else {
+                active.startSandboxMode()
+            }
+        }
+        active.sendCommand(command)
+        selectedTab = AppTab.TERMINAL
+        Toast.makeText(context, "Perintah dikirim ke Terminal", Toast.LENGTH_SHORT).show()
+    }
+
+    // Cross-Integration Handler: Analyze file from SFTP with Hermes Agent
+    val handleAskHermesAboutFile: (String, String) -> Unit = { fileName, fileContent ->
+        val prompt = "Tolong periksa dan jelaskan berkas '$fileName' berikut:\n\n```\n$fileContent\n```\nJelaskan fungsinya dan beri rekomendasi konfigurasi atau optimasi jika ada."
+        val userMsg = ChatMessage(role = "user", content = prompt)
+        hermesMessages.add(userMsg)
+        selectedTab = AppTab.HERMES
+        coroutineScope.launch {
+            val result = hermesClient.sendMessage(
+                userMessage = prompt,
+                history = hermesMessages.dropLast(1),
+                config = serverConfig,
+                useSandboxFallback = !serverConfig.isHermesConfigured
+            )
+            result.onSuccess { reply ->
+                hermesMessages.add(ChatMessage(role = "assistant", content = reply))
+            }.onFailure { err ->
+                hermesMessages.add(ChatMessage(
+                    role = "assistant",
+                    content = "Gagal memproses berkas: ${err.localizedMessage ?: "Unknown error"}",
+                    isError = true
+                ))
+            }
+        }
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = NavyDarkBackground,
@@ -136,7 +179,8 @@ fun TailHarnessApp() {
             ) {
                 TerminalScreen(
                     terminalManager = terminalManager,
-                    serverConfig = serverConfig
+                    serverConfig = serverConfig,
+                    encryptedStorage = encryptedStorage
                 )
             }
 
@@ -152,7 +196,8 @@ fun TailHarnessApp() {
             ) {
                 FilesScreen(
                     sftpManager = sftpManager,
-                    serverConfig = serverConfig
+                    serverConfig = serverConfig,
+                    onAskHermesAboutFile = handleAskHermesAboutFile
                 )
             }
 
@@ -173,6 +218,7 @@ fun TailHarnessApp() {
                     onConfigUpdated = { updatedConfig ->
                         serverConfig = updatedConfig
                     },
+                    onExecuteInTerminal = handleExecuteInTerminal,
                     messages = hermesMessages
                 )
             }

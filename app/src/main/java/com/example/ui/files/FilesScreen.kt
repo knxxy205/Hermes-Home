@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -90,6 +91,7 @@ import java.io.File
 fun FilesScreen(
     sftpManager: SftpManager,
     serverConfig: ServerConfig,
+    onAskHermesAboutFile: ((fileName: String, content: String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -606,11 +608,33 @@ fun FilesScreen(
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = { fileContentToView = null },
-                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Tutup", color = NavyDarkBackground, fontWeight = FontWeight.Bold)
+                    if (onAskHermesAboutFile != null) {
+                        Button(
+                            onClick = {
+                                onAskHermesAboutFile(previewName, previewContent)
+                                fileContentToView = null
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = BurntOrangeBadgeBg,
+                                contentColor = BurntOrange
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, BurntOrangeBorder)
+                        ) {
+                            Icon(Icons.Default.SmartToy, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Tanya Hermes", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
+                    Button(
+                        onClick = { fileContentToView = null },
+                        colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
+                    ) {
+                        Text("Tutup", color = NavyDarkBackground, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
                 }
             }
         )

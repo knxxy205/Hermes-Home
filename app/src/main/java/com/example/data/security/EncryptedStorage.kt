@@ -9,6 +9,7 @@ import com.example.data.hermes.ChatMessage
 import com.example.data.hermes.HermesChatSession
 import com.example.data.model.ConnectionProfile
 import com.example.data.model.ServerConfig
+import com.example.data.model.CustomSnippet
 import org.json.JSONArray
 import org.json.JSONObject
 import java.nio.ByteBuffer
@@ -43,6 +44,8 @@ class EncryptedStorage(context: Context) {
         private const val KEY_ACTIVE_PROFILE_ID = "active_profile_id"
         private const val KEY_PROFILE_IDS = "saved_profile_ids"
         private const val PREFIX_PROFILE = "profile_"
+
+        private const val KEY_CUSTOM_SNIPPETS = "custom_terminal_snippets"
     }
 
     private fun getOrCreateSecretKey(): SecretKey {
@@ -449,5 +452,83 @@ class EncryptedStorage(context: Context) {
         )
         saveChatSession(session)
         return session
+    }
+
+    // --- Custom Terminal Snippets Storage ---
+
+    fun loadCustomSnippets(): List<CustomSnippet> {
+        val raw = prefs.getString(KEY_CUSTOM_SNIPPETS, null)
+        if (raw.isNullOrBlank()) {
+            val defaults = CustomSnippet.getDefaultSnippets()
+            saveAllSnippets(defaults)
+            return defaults
+        }
+        return try {
+            val array = JSONArray(raw)
+            val list = mutableListOf<CustomSnippet>()
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    CustomSnippet(
+                        id = obj.optString("id", UUID.randomUUID().toString()),
+                        name = obj.optString("name", "Snippet"),
+                        command = obj.optString("command", ""),
+                        description = obj.optString("description", ""),
+                        category = obj.optString("category", "Umum"),
+                        isDefault = obj.optBoolean("isDefault", false)
+                    )
+                )
+            }
+            if (list.isEmpty()) {
+                val defaults = CustomSnippet.getDefaultSnippets()
+                saveAllSnippets(defaults)
+                defaults
+            } else {
+                list
+            }
+        } catch (e: Exception) {
+            val defaults = CustomSnippet.getDefaultSnippets()
+            saveAllSnippets(defaults)
+            defaults
+        }
+    }
+
+    fun saveAllSnippets(snippets: List<CustomSnippet>) {
+        try {
+            val array = JSONArray()
+            for (snip in snippets) {
+                val obj = JSONObject().apply {
+                    put("id", snip.id)
+                    put("name", snip.name)
+                    put("command", snip.command)
+                    put("description", snip.description)
+                    put("category", snip.category)
+                    put("isDefault", snip.isDefault)
+                }
+                array.put(obj)
+            }
+            prefs.edit().putString(KEY_CUSTOM_SNIPPETS, array.toString()).apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun addCustomSnippet(snippet: CustomSnippet) {
+        val current = loadCustomSnippets().toMutableList()
+        current.removeAll { it.id == snippet.id }
+        current.add(snippet)
+        saveAllSnippets(current)
+    }
+
+    fun deleteCustomSnippet(id: String) {
+        val current = loadCustomSnippets().toMutableList()
+        current.removeAll { it.id == id }
+        saveAllSnippets(current)
+    }
+
+    fun resetDefaultSnippets(): List<CustomSnippet> {
+        val defaults = CustomSnippet.getDefaultSnippets()
+        saveAllSnippets(defaults)
+        return defaults
     }
 }

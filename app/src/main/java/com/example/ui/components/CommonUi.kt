@@ -34,6 +34,7 @@ import com.example.ui.theme.BurntOrangeBadgeBg
 import com.example.ui.theme.BurntOrangeBorder
 import com.example.ui.theme.BurntOrangePillBg
 import com.example.ui.theme.NavyCardBorder
+import com.example.ui.theme.NavyDarkBackground
 import com.example.ui.theme.NavyDarkBorder
 import com.example.ui.theme.NavyDarkCard
 import com.example.ui.theme.NavyDarkSurface
@@ -182,13 +183,19 @@ fun PillChip(
 fun ShortcutKeyButton(
     label: String,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isActive: Boolean = false,
+    highlightColor: Color = BurntOrange
 ) {
+    val bg = if (isActive) highlightColor else NavyDarkSurface
+    val borderColor = if (isActive) highlightColor else NavyDarkBorder
+    val textColor = if (isActive) NavyDarkBackground else highlightColor
+
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(50))
-            .background(NavyDarkSurface)
-            .border(1.dp, NavyDarkBorder, RoundedCornerShape(50))
+            .background(bg)
+            .border(1.dp, borderColor, RoundedCornerShape(50))
             .clickable { onClick() }
             .padding(horizontal = 12.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
@@ -197,7 +204,7 @@ fun ShortcutKeyButton(
             text = label,
             style = MaterialTheme.typography.labelMedium.copy(
                 fontWeight = FontWeight.Bold,
-                color = BurntOrange,
+                color = textColor,
                 fontSize = 12.sp,
                 letterSpacing = 0.5.sp
             )

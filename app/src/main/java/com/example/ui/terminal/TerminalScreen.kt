@@ -1,8 +1,11 @@
 package com.example.ui.terminal
 
 import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,18 +28,27 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -56,8 +68,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.CustomSnippet
 import com.example.data.model.ServerConfig
-import com.example.data.ssh.AnsiTerminalParser
+import com.example.data.security.EncryptedStorage
 import com.example.data.ssh.SshTerminalManager
 import com.example.data.ssh.TerminalConnectionState
 import com.example.ui.components.CustomScreenHeader
@@ -67,48 +80,62 @@ import com.example.ui.components.StatusBadge
 import com.example.ui.theme.BurntOrange
 import com.example.ui.theme.BurntOrangeBadgeBg
 import com.example.ui.theme.BurntOrangeBorder
+import com.example.ui.theme.BurntOrangePillBg
 import com.example.ui.theme.NavyCardBorder
 import com.example.ui.theme.NavyDarkBackground
 import com.example.ui.theme.NavyDarkBorder
 import com.example.ui.theme.NavyDarkCard
 import com.example.ui.theme.NavyDarkSurface
 import com.example.ui.theme.TerminalBg
+import com.example.ui.theme.TerminalCyan
 import com.example.ui.theme.TerminalGreen
+import com.example.ui.theme.TerminalRed
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TerminalScreen(
     terminalManager: SshTerminalManager,
     serverConfig: ServerConfig,
+    encryptedStorage: EncryptedStorage? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
-    val connectionState by terminalManager.connectionState.collectAsState()
-    val terminalRawOutput by terminalManager.terminalOutput.collectAsState()
+
+    val sessions by terminalManager.sessions.collectAsState()
+    val activeSessionIndex by terminalManager.activeSessionIndex.collectAsState()
+    val activeSession by terminalManager.activeSession.collectAsState()
+
+    val connectionState by activeSession.connectionState.collectAsState()
+    val terminalAnnotatedOutput by activeSession.terminalAnnotatedOutput.collectAsState()
+    val isInteractiveMode by activeSession.isInteractiveMode.collectAsState()
+
+    var inputCommand by remember { mutableStateOf("") }
+    var isCtrlActive by remember { mutableStateOf(false) }
+
+    // Custom snippets state
+    var snippets by remember {
+        mutableStateOf(encryptedStorage?.loadCustomSnippets() ?: CustomSnippet.getDefaultSnippets())
+    }
+    var showAddSnippetDialog by remember { mutableStateOf(false) }
+    var snippetToAction by remember { mutableStateOf<CustomSnippet?>(null) }
+
+    // New Snippet form fields
+    var newSnippetName by remember { mutableStateOf("") }
+    var newSnippetCommand by remember { mutableStateOf("") }
+    var newSnippetCategory by remember { mutableStateOf("Umum") }
+
     val verticalScrollState = rememberScrollState()
+    val terminalHorizontalScrollState = rememberScrollState()
+    val tabsScrollState = rememberScrollState()
     val quickCmdScrollState = rememberScrollState()
     val shortcutScrollState = rememberScrollState()
 
-    var inputCommand by remember { mutableStateOf("") }
-
-    // Auto scroll to bottom when terminal output grows
-    LaunchedEffect(terminalRawOutput) {
+    // Auto-scroll to bottom of active session output
+    LaunchedEffect(terminalAnnotatedOutput) {
         verticalScrollState.scrollTo(verticalScrollState.maxValue)
-    }
-
-    val quickCommands = remember {
-        listOf(
-            "uname -a",
-            "docker ps",
-            "df -h",
-            "ls -la",
-            "pwd",
-            "free -h",
-            "uptime",
-            "systemctl status"
-        )
     }
 
     val hostSubtitle = when (val state = connectionState) {
@@ -134,7 +161,7 @@ fun TerminalScreen(
                 when (connectionState) {
                     is TerminalConnectionState.Connected -> {
                         Button(
-                            onClick = { terminalManager.disconnect() },
+                            onClick = { activeSession.disconnect() },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = BurntOrangeBadgeBg,
                                 contentColor = BurntOrange
@@ -160,10 +187,9 @@ fun TerminalScreen(
                         Button(
                             onClick = {
                                 if (serverConfig.isSshConfigured) {
-                                    terminalManager.connect(serverConfig)
+                                    activeSession.connect(serverConfig)
                                 } else {
-                                    // Start interactive sandbox demo if not yet configured
-                                    terminalManager.startSandboxMode()
+                                    activeSession.startSandboxMode()
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(
@@ -187,6 +213,112 @@ fun TerminalScreen(
             }
         )
 
+        // Terminal Multi-Session Tabs Bar (Fitur 4)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(NavyDarkSurface)
+                .border(1.dp, NavyDarkBorder)
+                .horizontalScroll(tabsScrollState)
+                .padding(horizontal = 14.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            sessions.forEachIndexed { index, sess ->
+                val isCurrent = index == activeSessionIndex
+                val sessionTitle by sess.title.collectAsState()
+                val sessionConnState by sess.connectionState.collectAsState()
+                val dotColor = when (sessionConnState) {
+                    is TerminalConnectionState.Connected -> TerminalGreen
+                    is TerminalConnectionState.Connecting -> BurntOrange
+                    is TerminalConnectionState.Error -> TerminalRed
+                    else -> TextSecondary.copy(alpha = 0.5f)
+                }
+
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isCurrent) BurntOrangeBadgeBg else NavyDarkBackground)
+                        .border(
+                            width = 1.dp,
+                            color = if (isCurrent) BurntOrange else NavyDarkBorder,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .clickable { terminalManager.selectSession(index) }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Session Status Dot
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(dotColor)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "#${index + 1} $sessionTitle",
+                        color = if (isCurrent) BurntOrange else TextPrimary,
+                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+
+                    // Close Session button (if more than 1 session)
+                    if (sessions.size > 1) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clip(CircleShape)
+                                .clickable {
+                                    terminalManager.closeSession(index)
+                                    Toast.makeText(context, "Sesi #${index + 1} ditutup", Toast.LENGTH_SHORT).show()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Tutup Sesi",
+                                tint = if (isCurrent) BurntOrange else TextSecondary,
+                                modifier = Modifier.size(11.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // New Session Button (+)
+            if (sessions.size < 5) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(BurntOrangePillBg)
+                        .border(1.dp, BurntOrangeBorder, RoundedCornerShape(8.dp))
+                        .clickable {
+                            terminalManager.createSession(serverConfig)
+                            Toast.makeText(context, "Sesi terminal baru #${sessions.size + 1} dibuka", Toast.LENGTH_SHORT).show()
+                        }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = "New Session",
+                        tint = BurntOrange,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        "Sesi Baru",
+                        color = BurntOrange,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
         // Status badge row
         Row(
             modifier = Modifier
@@ -195,15 +327,24 @@ fun TerminalScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val (statusText, isSuccess) = when (connectionState) {
-                is TerminalConnectionState.Connected -> "SSH CONNECTED" to true
-                is TerminalConnectionState.Connecting -> "CONNECTING..." to false
-                is TerminalConnectionState.Error -> "CONNECTION ERROR" to false
-                TerminalConnectionState.Disconnected -> "STANDBY" to false
+            val (statusText, isSuccess) = when {
+                isInteractiveMode -> "NANO ACTIVE" to true
+                connectionState is TerminalConnectionState.Connected -> "SSH CONNECTED" to true
+                connectionState is TerminalConnectionState.Connecting -> "CONNECTING..." to false
+                connectionState is TerminalConnectionState.Error -> "CONNECTION ERROR" to false
+                else -> "STANDBY" to false
             }
             StatusBadge(text = statusText, isSuccess = isSuccess)
 
-            if (!serverConfig.isSshConfigured && connectionState !is TerminalConnectionState.Connected) {
+            if (isInteractiveMode) {
+                Text(
+                    text = "^O Simpan • ENTER OK • ^X Keluar",
+                    color = BurntOrange,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+            } else if (!serverConfig.isSshConfigured && connectionState !is TerminalConnectionState.Connected) {
                 Text(
                     text = "Tip: Tap 'Sandbox' to test CLI",
                     color = TextSecondary,
@@ -213,7 +354,7 @@ fun TerminalScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
         // Main Terminal Output Window (Near-black background with bright green/ANSI text)
         Box(
@@ -221,53 +362,114 @@ fun TerminalScreen(
                 .weight(1f)
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(12.dp))
                 .background(TerminalBg)
-                .border(1.dp, NavyCardBorder, RoundedCornerShape(16.dp))
+                .border(1.dp, NavyCardBorder, RoundedCornerShape(12.dp))
                 .padding(12.dp)
         ) {
-            val annotatedOutput = remember(terminalRawOutput) {
-                AnsiTerminalParser.parse(terminalRawOutput)
-            }
-
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(verticalScrollState)
+                    .horizontalScroll(terminalHorizontalScrollState)
             ) {
                 Text(
-                    text = annotatedOutput,
+                    text = terminalAnnotatedOutput,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
-                    color = TerminalGreen
+                    color = TerminalGreen,
+                    softWrap = !isInteractiveMode
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
-        // Quick Command Chips Row (horizontal scrollable)
+        // Quick Snippets / Custom Action Buttons Bar (Fitur 3)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(quickCmdScrollState)
                 .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            for (cmd in quickCommands) {
-                PillChip(
-                    label = cmd,
-                    onClick = {
-                        terminalManager.sendCommand(cmd)
+            // "+ Tambah" Action Button for Custom Snippet
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(BurntOrangePillBg)
+                    .border(1.dp, BurntOrangeBorder, RoundedCornerShape(16.dp))
+                    .clickable {
+                        newSnippetName = ""
+                        newSnippetCommand = ""
+                        showAddSnippetDialog = true
                     }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "Tambah Snippet",
+                    tint = BurntOrange,
+                    modifier = Modifier.size(14.dp)
                 )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    "Tambah",
+                    color = BurntOrange,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            // Custom Snippet Chips with long-press management
+            for (snip in snippets) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (snip.isDefault) NavyDarkSurface else BurntOrangeBadgeBg.copy(alpha = 0.5f))
+                        .border(
+                            width = 1.dp,
+                            color = if (snip.isDefault) NavyDarkBorder else BurntOrangeBorder,
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                        .combinedClickable(
+                            onClick = {
+                                activeSession.sendCommand(snip.command)
+                                Toast.makeText(context, "Menjalankan: ${snip.name}", Toast.LENGTH_SHORT).show()
+                            },
+                            onLongClick = {
+                                snippetToAction = snip
+                            }
+                        )
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (!snip.isDefault) {
+                        Icon(
+                            Icons.Default.FlashOn,
+                            contentDescription = null,
+                            tint = BurntOrange,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text(
+                        text = snip.name,
+                        color = if (snip.isDefault) TextPrimary else BurntOrange,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
-        // Shortcut Key Row: Up, Down, Left, Right, ESC, TAB, CTRL+C, ALT (horizontal scrollable)
+        // Shortcut Key Row with CTRL toggle, ^O, ^X, ENTER, Arrows, ESC, TAB, CTRL+C, etc.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -275,62 +477,105 @@ fun TerminalScreen(
                 .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            ShortcutKeyButton(label = "↑", onClick = { terminalManager.sendKeyUp() })
-            ShortcutKeyButton(label = "↓", onClick = { terminalManager.sendKeyDown() })
-            ShortcutKeyButton(label = "←", onClick = { terminalManager.sendKeyLeft() })
-            ShortcutKeyButton(label = "→", onClick = { terminalManager.sendKeyRight() })
-            ShortcutKeyButton(label = "ESC", onClick = { terminalManager.sendKeyEsc() })
-            ShortcutKeyButton(label = "TAB", onClick = { terminalManager.sendKeyTab() })
-            ShortcutKeyButton(label = "CTRL+C", onClick = { terminalManager.sendKeyCtrlC() })
-            ShortcutKeyButton(label = "ALT", onClick = { terminalManager.sendKeyAlt() })
-            ShortcutKeyButton(label = "PASTE", onClick = {
-                val clipText = clipboardManager.getText()?.text
-                if (!clipText.isNullOrBlank()) {
-                    inputCommand = if (inputCommand.isBlank()) clipText else "$inputCommand $clipText"
-                    Toast.makeText(context, "Ditempel dari clipboard", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(context, "Clipboard kosong", Toast.LENGTH_SHORT).show()
+            // CTRL Modifier Toggle
+            ShortcutKeyButton(
+                label = if (isCtrlActive) "CTRL [ON]" else "CTRL",
+                isActive = isCtrlActive,
+                onClick = {
+                    isCtrlActive = !isCtrlActive
+                    if (isCtrlActive) {
+                        Toast.makeText(context, "CTRL aktif: Ketik huruf apa saja (misal 'o' atau 'x')", Toast.LENGTH_SHORT).show()
+                    }
                 }
-            })
-            ShortcutKeyButton(label = "CLR", onClick = { terminalManager.clearBuffer() })
+            )
+
+            // Dedicated Nano Action Buttons
+            ShortcutKeyButton(
+                label = "^O",
+                isActive = isInteractiveMode,
+                onClick = {
+                    activeSession.sendKeyCtrlO()
+                    Toast.makeText(context, "Ctrl+O dikirim (Write Out / Save)", Toast.LENGTH_SHORT).show()
+                }
+            )
+            ShortcutKeyButton(
+                label = "^X",
+                isActive = isInteractiveMode,
+                onClick = {
+                    activeSession.sendKeyCtrlX()
+                    Toast.makeText(context, "Ctrl+X dikirim (Exit)", Toast.LENGTH_SHORT).show()
+                }
+            )
+            ShortcutKeyButton(
+                label = "ENTER ↵",
+                isActive = false,
+                onClick = {
+                    activeSession.sendKeyEnter()
+                    Toast.makeText(context, "↵ Enter dikirim", Toast.LENGTH_SHORT).show()
+                }
+            )
+
+            ShortcutKeyButton(label = "ESC", onClick = { activeSession.sendKeyEsc() })
+            ShortcutKeyButton(label = "TAB", onClick = { activeSession.sendKeyTab() })
+            ShortcutKeyButton(label = "^C", onClick = { activeSession.sendKeyCtrlC() })
+            ShortcutKeyButton(label = "↑", onClick = { activeSession.sendKeyUp() })
+            ShortcutKeyButton(label = "↓", onClick = { activeSession.sendKeyDown() })
+            ShortcutKeyButton(label = "←", onClick = { activeSession.sendKeyLeft() })
+            ShortcutKeyButton(label = "→", onClick = { activeSession.sendKeyRight() })
+            ShortcutKeyButton(label = "CLEAR", onClick = { activeSession.clearBuffer() })
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
-        // Input Command Row: Modern Pill Layout with Standalone Circular Send Button
+        // Command Input Field and Circular Send Button
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 6.dp),
+                .padding(horizontal = 16.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Pill Container
+            // The unified input container
             Row(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(24.dp))
                     .background(NavyDarkCard)
-                    .border(1.dp, NavyDarkBorder, RoundedCornerShape(24.dp))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .border(
+                        1.dp,
+                        if (isCtrlActive) BurntOrange else NavyCardBorder,
+                        RoundedCornerShape(24.dp)
+                    )
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "$ ",
-                    color = TerminalGreen,
-                    fontWeight = FontWeight.Bold,
+                    text = if (isCtrlActive) "CTRL+" else "$ ",
+                    color = if (isCtrlActive) BurntOrange else TerminalGreen,
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 15.sp,
-                    modifier = Modifier.padding(start = 2.dp)
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
                 )
+
+                Spacer(modifier = Modifier.width(6.dp))
 
                 BasicTextField(
                     value = inputCommand,
-                    onValueChange = { inputCommand = it },
+                    onValueChange = { newVal ->
+                        if (isCtrlActive && newVal.length > inputCommand.length) {
+                            val newChar = newVal.last()
+                            if (newChar.isLetter()) {
+                                activeSession.sendKeyCtrl(newChar)
+                                Toast.makeText(context, "Ctrl+${newChar.uppercaseChar()} dikirim", Toast.LENGTH_SHORT).show()
+                                isCtrlActive = false
+                                return@BasicTextField
+                            }
+                        }
+                        inputCommand = newVal
+                    },
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 6.dp, vertical = 4.dp)
-                        .testTag("terminal_command_input"),
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        .testTag("command_input_field"),
+                    textStyle = androidx.compose.ui.text.TextStyle(
                         color = TextPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 14.sp
@@ -341,16 +586,18 @@ fun TerminalScreen(
                     keyboardActions = KeyboardActions(
                         onSend = {
                             if (inputCommand.isNotBlank()) {
-                                terminalManager.sendCommand(inputCommand)
+                                activeSession.sendCommand(inputCommand)
                                 inputCommand = ""
+                            } else {
+                                activeSession.sendKeyEnter()
                             }
                         }
                     ),
                     decorationBox = { innerTextField ->
                         if (inputCommand.isEmpty()) {
                             Text(
-                                text = "Ketik perintah...",
-                                color = TextSecondary.copy(alpha = 0.55f),
+                                text = if (isCtrlActive) "Ketik huruf untuk Ctrl+... (o=Simpan, x=Keluar)" else "Ketik perintah...",
+                                color = if (isCtrlActive) BurntOrange.copy(alpha = 0.8f) else TextSecondary.copy(alpha = 0.55f),
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 13.sp
                             )
@@ -400,30 +647,220 @@ fun TerminalScreen(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Standalone Circular Send Button
+            // Standalone Circular Send / Enter Button (Always active!)
             IconButton(
                 onClick = {
                     if (inputCommand.isNotBlank()) {
-                        terminalManager.sendCommand(inputCommand)
+                        activeSession.sendCommand(inputCommand)
                         inputCommand = ""
+                    } else {
+                        activeSession.sendKeyEnter()
+                        Toast.makeText(context, "↵ Enter", Toast.LENGTH_SHORT).show()
                     }
                 },
-                enabled = inputCommand.isNotBlank(),
+                enabled = true,
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
-                    .background(if (inputCommand.isNotBlank()) BurntOrange else BurntOrange.copy(alpha = 0.25f))
+                    .background(BurntOrange)
                     .testTag("send_command_button")
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Send",
-                    tint = if (inputCommand.isNotBlank()) NavyDarkBackground else TextSecondary,
+                    contentDescription = if (inputCommand.isNotBlank()) "Send" else "Enter",
+                    tint = NavyDarkBackground,
                     modifier = Modifier.size(20.dp)
                 )
             }
         }
 
         Spacer(modifier = Modifier.height(4.dp))
+    }
+
+    // Modal Dialog: Add Custom Snippet (Fitur 3)
+    if (showAddSnippetDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddSnippetDialog = false },
+            containerColor = NavyDarkCard,
+            titleContentColor = TextPrimary,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.BookmarkBorder, contentDescription = null, tint = BurntOrange, modifier = Modifier.size(22.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Tambah Perintah Favorit", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Simpan perintah bash yang sering digunakan untuk eksekusi 1-klik di terminal.",
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+
+                    OutlinedTextField(
+                        value = newSnippetName,
+                        onValueChange = { newSnippetName = it },
+                        label = { Text("Label Tombol (contoh: Nginx Restart)") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BurntOrange,
+                            unfocusedBorderColor = NavyDarkBorder,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = newSnippetCommand,
+                        onValueChange = { newSnippetCommand = it },
+                        label = { Text("Perintah Bash CLI") },
+                        placeholder = { Text("sudo systemctl restart nginx") },
+                        singleLine = false,
+                        maxLines = 3,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BurntOrange,
+                            unfocusedBorderColor = NavyDarkBorder,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Quick Template Suggestions
+                    Text("Template Populer:", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val templates = listOf(
+                            "Docker Restart" to "docker compose restart",
+                            "Flush RAM" to "sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches",
+                            "Cek Port" to "sudo ss -tulpn",
+                            "Ping Gateway" to "ping -c 4 1.1.1.1",
+                            "Storage Detail" to "ncdu / -x || df -h"
+                        )
+                        for ((tLabel, tCmd) in templates) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(NavyDarkSurface)
+                                    .border(1.dp, NavyDarkBorder, RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        newSnippetName = tLabel
+                                        newSnippetCommand = tCmd
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(tLabel, color = BurntOrange, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newSnippetName.isNotBlank() && newSnippetCommand.isNotBlank()) {
+                            val newSnip = CustomSnippet(
+                                name = newSnippetName.trim(),
+                                command = newSnippetCommand.trim(),
+                                category = newSnippetCategory,
+                                isDefault = false
+                            )
+                            encryptedStorage?.addCustomSnippet(newSnip)
+                            snippets = encryptedStorage?.loadCustomSnippets() ?: (snippets + newSnip)
+                            showAddSnippetDialog = false
+                            Toast.makeText(context, "Tombol pintasan '${newSnip.name}' disimpan", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "Mohon lengkapi nama dan perintah", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
+                ) {
+                    Text("Simpan", color = NavyDarkBackground, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddSnippetDialog = false }) {
+                    Text("Batal", color = TextSecondary)
+                }
+            }
+        )
+    }
+
+    // Modal Dialog: Snippet Actions (Long-press)
+    val actionSnip = snippetToAction
+    if (actionSnip != null) {
+        AlertDialog(
+            onDismissRequest = { snippetToAction = null },
+            containerColor = NavyDarkCard,
+            titleContentColor = TextPrimary,
+            title = {
+                Text(actionSnip.name, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Perintah: ${actionSnip.command}", color = TerminalGreen, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Button(
+                        onClick = {
+                            activeSession.sendCommand(actionSnip.command)
+                            snippetToAction = null
+                            Toast.makeText(context, "Menjalankan ${actionSnip.name}", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = BurntOrange),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = NavyDarkBackground, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Jalankan Sekarang", color = NavyDarkBackground, fontWeight = FontWeight.Bold)
+                    }
+
+                    Button(
+                        onClick = {
+                            inputCommand = actionSnip.command
+                            snippetToAction = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = NavyDarkSurface),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, NavyDarkBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Salin ke Kolom Input", color = TextPrimary)
+                    }
+
+                    if (!actionSnip.isDefault) {
+                        Button(
+                            onClick = {
+                                encryptedStorage?.deleteCustomSnippet(actionSnip.id)
+                                snippets = encryptedStorage?.loadCustomSnippets() ?: snippets.filter { it.id != actionSnip.id }
+                                snippetToAction = null
+                                Toast.makeText(context, "Snippet dihapus", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = TerminalRed.copy(alpha = 0.15f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, TerminalRed),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null, tint = TerminalRed, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Hapus Pintasan", color = TerminalRed, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { snippetToAction = null }) {
+                    Text("Tutup", color = TextSecondary)
+                }
+            }
+        )
     }
 }
