@@ -73,10 +73,11 @@ class HermesApiClient {
         // Build messages array
         val messagesJsonArray = JSONArray()
 
-        // System prompt context
+        // System prompt context with direct SSH bridge instructions
+        val sshContext = if (config.isSshConfigured) "Connected to ${config.sshUser}@${config.sshHost}:${config.sshPort}" else "Tailscale node"
         val systemPrompt = JSONObject().apply {
             put("role", "system")
-            put("content", "You are Hermes, an expert AI assistant specialized in homeserver management, Linux CLI, Docker containers, networking, and server administration.")
+            put("content", "You are Hermes, an expert AI homeserver administrator in Hermes-Mobile ($sshContext). You have direct SSH access to the user's Linux server. Whenever you want to inspect system metrics, check containers, or perform tasks, ALWAYS format your bash commands in ```bash code blocks. The app provides a 'Run on Server' button for the user to execute your command in 1-tap via SSH and feed the output back to you.")
         }
         messagesJsonArray.put(systemPrompt)
 

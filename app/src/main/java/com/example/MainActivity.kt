@@ -2,7 +2,6 @@ package com.example
 
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
@@ -21,24 +20,29 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -52,30 +56,39 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.fragment.app.FragmentActivity
 import com.example.data.hermes.ChatMessage
 import com.example.data.hermes.HermesApiClient
+import com.example.data.security.BiometricAuthHelper
 import com.example.data.security.EncryptedStorage
 import com.example.data.sftp.SftpManager
 import com.example.data.ssh.SshTerminalManager
 import com.example.data.ssh.TerminalConnectionState
-import kotlinx.coroutines.launch
+import com.example.data.worker.ServerHealthWorker
 import com.example.ui.files.FilesScreen
 import com.example.ui.hermes.HermesChatScreen
 import com.example.ui.settings.SettingsScreen
 import com.example.ui.terminal.TerminalScreen
 import com.example.ui.theme.BurntOrange
+import com.example.ui.theme.BurntOrangeBadgeBg
 import com.example.ui.theme.BurntOrangeBorder
 import com.example.ui.theme.BurntOrangePillBg
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.NavyCardBorder
 import com.example.ui.theme.NavyDarkBackground
 import com.example.ui.theme.NavyDarkBorder
+import com.example.ui.theme.NavyDarkCard
 import com.example.ui.theme.NavyDarkSurface
+import com.example.ui.theme.TerminalGreen
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import kotlinx.coroutines.launch
 
 enum class AppTab(val title: String, val icon: ImageVector, val tag: String) {
     TERMINAL("Terminal", Icons.Default.Terminal, "tab_terminal"),
@@ -84,20 +97,189 @@ enum class AppTab(val title: String, val icon: ImageVector, val tag: String) {
     SETTINGS("Settings", Icons.Default.Settings, "tab_settings")
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Schedule periodic 1-hour background server health check
+        ServerHealthWorker.schedulePeriodicCheck(applicationContext)
+
         setContent {
             MyApplicationTheme {
-                TailHarnessApp()
+                TailHarnessApp(activity = this)
             }
         }
     }
 }
 
 @Composable
-fun TailHarnessApp() {
+fun TailHarnessApp(activity: FragmentActivity? = null) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    var isVaultUnlocked by remember { mutableStateOf(false) }
+
+    // Auto-prompt biometric authentication on startup if activity is present
+    LaunchedEffect(activity) {
+        if (activity != null && !isVaultUnlocked) {
+            BiometricAuthHelper.showBiometricPrompt(
+                activity = activity,
+                onSuccess = {
+                    isVaultUnlocked = true
+                },
+                onError = { err ->
+                    // Keep lock screen visible so user can retry or use PIN
+                }
+            )
+        }
+    }
+
+    AnimatedContent(
+        targetState = isVaultUnlocked,
+        transitionSpec = { fadeIn() togetherWith fadeOut() },
+        label = "vault_auth_transition"
+    ) { unlocked ->
+        if (!unlocked) {
+            VaultLockScreen(
+                onUnlockRequested = {
+                    if (activity != null) {
+                        BiometricAuthHelper.showBiometricPrompt(
+                            activity = activity,
+                            onSuccess = { isVaultUnlocked = true },
+                            onError = { errMsg ->
+                                Toast.makeText(context, errMsg, Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    } else {
+                        // Fallback in previews or non-activity contexts
+                        isVaultUnlocked = true
+                    }
+                }
+            )
+        } else {
+            MainContentScreen()
+        }
+    }
+}
+
+@Composable
+fun VaultLockScreen(
+    onUnlockRequested: () -> Unit
+) {
+    val context = LocalContext.current
+    val encryptedStorage = remember { EncryptedStorage(context) }
+    val serverConfig = remember { encryptedStorage.loadConfig() }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(NavyDarkBackground)
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            // Shield & Fingerprint Visual Emblem
+            Box(
+                modifier = Modifier
+                    .size(96.dp)
+                    .clip(CircleShape)
+                    .background(BurntOrangeBadgeBg)
+                    .border(2.dp, BurntOrange, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Fingerprint,
+                    contentDescription = "Biometric Vault",
+                    tint = BurntOrange,
+                    modifier = Modifier.size(54.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                text = "Hermes Vault",
+                color = TextPrimary,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Autentikasi biometrik atau PIN/Pola perangkat diperlukan untuk mengakses terminal SSH dan kunci server.",
+                color = TextSecondary,
+                fontSize = 13.sp,
+                lineHeight = 19.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Target Node Card Indicator
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(NavyDarkCard)
+                    .border(1.dp, NavyDarkBorder, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Security,
+                    contentDescription = null,
+                    tint = TerminalGreen,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (serverConfig.isSshConfigured) "Node: ${serverConfig.sshHost}" else "Node: Tailscale Encrypted",
+                    color = TextPrimary,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Button(
+                onClick = onUnlockRequested,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .testTag("unlock_vault_button"),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = BurntOrange,
+                    contentColor = NavyDarkBackground
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = NavyDarkBackground,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Buka Vault (Biometrik / PIN)",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun MainContentScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
@@ -214,6 +396,7 @@ fun TailHarnessApp() {
                 HermesChatScreen(
                     hermesClient = hermesClient,
                     serverConfig = serverConfig,
+                    sshTerminalManager = terminalManager,
                     encryptedStorage = encryptedStorage,
                     onConfigUpdated = { updatedConfig ->
                         serverConfig = updatedConfig

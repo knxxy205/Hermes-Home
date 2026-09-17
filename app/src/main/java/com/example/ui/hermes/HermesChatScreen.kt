@@ -107,6 +107,7 @@ import java.util.UUID
 fun HermesChatScreen(
     hermesClient: HermesApiClient,
     serverConfig: ServerConfig,
+    sshTerminalManager: com.example.data.ssh.SshTerminalManager? = null,
     encryptedStorage: EncryptedStorage? = null,
     onConfigUpdated: ((ServerConfig) -> Unit)? = null,
     onExecuteInTerminal: ((String) -> Unit)? = null,
@@ -119,6 +120,7 @@ fun HermesChatScreen(
 
     var inputText by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
+    var isRunningServerCommand by remember { mutableStateOf(false) }
 
     var currentSessionId by remember {
         mutableStateOf(encryptedStorage?.getActiveChatSessionId() ?: UUID.randomUUID().toString())
@@ -153,6 +155,39 @@ fun HermesChatScreen(
         )
         encryptedStorage.saveChatSession(session)
         refreshSavedSessions()
+    }
+
+    fun handleRunOnServer(command: String) {
+        if (isRunningServerCommand) return
+        isRunningServerCommand = true
+        scope.launch {
+            Toast.makeText(context, "Mengeksekusi perintah di server via SSH...", Toast.LENGTH_SHORT).show()
+            val result = sshTerminalManager?.executeCommand(serverConfig, command)
+                ?: Result.failure(Exception("SSH Manager belum tersedia"))
+
+            isRunningServerCommand = false
+            result.onSuccess { output ->
+                messages.add(
+                    ChatMessage(
+                        role = "assistant",
+                        content = "⚡ **Hasil Eksekusi di Server:** (`$command`)\n```bash\n$output\n```"
+                    )
+                )
+                autoSaveCurrentSession()
+                listState.animateScrollToItem(messages.lastIndex)
+                Toast.makeText(context, "Selesai dieksekusi di server", Toast.LENGTH_SHORT).show()
+            }.onFailure { err ->
+                messages.add(
+                    ChatMessage(
+                        role = "assistant",
+                        content = "❌ **Gagal mengeksekusi di server:**\n${err.localizedMessage ?: "Unknown error"}",
+                        isError = true
+                    )
+                )
+                autoSaveCurrentSession()
+                listState.animateScrollToItem(messages.lastIndex)
+            }
+        }
     }
 
     fun startNewChatSession() {
@@ -570,6 +605,7 @@ fun HermesChatScreen(
                     onActionClick = { actionType, value ->
                         handleInteractiveAction(actionType, value)
                     },
+                    onRunOnServer = { cmd -> handleRunOnServer(cmd) },
                     onExecuteInTerminal = onExecuteInTerminal
                 )
             }
@@ -962,6 +998,7 @@ fun ChatMessageItem(
     currentModel: String = "",
     onCopy: () -> Unit,
     onActionClick: (String?, String) -> Unit = { _, _ -> },
+    onRunOnServer: ((String) -> Unit)? = null,
     onExecuteInTerminal: ((String) -> Unit)? = null
 ) {
     val isUser = message.role == "user"
@@ -1028,6 +1065,7 @@ fun ChatMessageItem(
                         if (content.contains("```")) {
                             FormattedCodeAndTextMessage(
                                 rawContent = content,
+                                onRunOnServer = onRunOnServer,
                                 onExecuteInTerminal = onExecuteInTerminal
                             )
                         } else {
@@ -1132,6 +1170,7 @@ fun ChatMessageItem(
 @Composable
 fun FormattedCodeAndTextMessage(
     rawContent: String,
+    onRunOnServer: ((String) -> Unit)? = null,
     onExecuteInTerminal: ((String) -> Unit)? = null
 ) {
     val context = LocalContext.current
@@ -1206,7 +1245,37 @@ fun FormattedCodeAndTextMessage(
                                 }
                             }
 
-                            // Run in Terminal button
+                            // Run on Server button (Executes directly via SSH and streams back output)
+                            if (onRunOnServer != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(BurntOrange)
+                                        .clickable {
+                                            onRunOnServer(cleanCode)
+                                        }
+                                        .padding(horizontal = 7.dp, vertical = 3.dp)
+                                        .testTag("run_on_server_button")
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Default.PlayArrow,
+                                            contentDescription = "Run on Server",
+                                            tint = NavyDarkBackground,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            "Run on Server",
+                                            color = NavyDarkBackground,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Optional Run in Interactive Terminal button
                             if (onExecuteInTerminal != null) {
                                 Box(
                                     modifier = Modifier
@@ -1216,21 +1285,20 @@ fun FormattedCodeAndTextMessage(
                                         .clickable {
                                             onExecuteInTerminal(cleanCode)
                                         }
-                                        .padding(horizontal = 7.dp, vertical = 3.dp)
+                                        .padding(horizontal = 6.dp, vertical = 3.dp)
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(
-                                            Icons.Default.PlayArrow,
-                                            contentDescription = "Jalankan di Terminal",
+                                            Icons.Default.Terminal,
+                                            contentDescription = "Terminal",
                                             tint = BurntOrange,
-                                            modifier = Modifier.size(12.dp)
+                                            modifier = Modifier.size(11.dp)
                                         )
-                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Spacer(modifier = Modifier.width(2.dp))
                                         Text(
-                                            "Jalankan di Terminal",
+                                            "Terminal",
                                             color = BurntOrange,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold
+                                            fontSize = 10.sp
                                         )
                                     }
                                 }
