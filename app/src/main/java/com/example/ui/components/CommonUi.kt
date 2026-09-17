@@ -227,7 +227,7 @@ fun StatusBadge(
             .clip(RoundedCornerShape(50))
             .background(badgeBg)
             .border(1.dp, badgeBorder, RoundedCornerShape(50))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 9.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -243,7 +243,9 @@ fun StatusBadge(
                 fontWeight = FontWeight.Bold,
                 color = badgeColor,
                 fontSize = 11.sp
-            )
+            ),
+            maxLines = 1,
+            softWrap = false
         )
     }
 }

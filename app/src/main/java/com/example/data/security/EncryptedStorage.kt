@@ -161,8 +161,9 @@ class EncryptedStorage(context: Context) {
 
         val result = mutableListOf<ConnectionProfile>()
         for (id in profileIds) {
-            val name = prefs.getString("${PREFIX_PROFILE}${id}_name", null)
-            if (name != null) {
+            val rawName = prefs.getString("${PREFIX_PROFILE}${id}_name", null)
+            if (rawName != null) {
+                val name = rawName.removeEmojis().ifBlank { rawName }
                 val encHost = prefs.getString("${PREFIX_PROFILE}${id}_ssh_host", "") ?: ""
                 val port = prefs.getInt("${PREFIX_PROFILE}${id}_ssh_port", 22)
                 val encUser = prefs.getString("${PREFIX_PROFILE}${id}_ssh_user", "") ?: ""
@@ -527,4 +528,108 @@ class EncryptedStorage(context: Context) {
         saveAllSnippets(defaults)
         return defaults
     }
+
+    // ==========================================
+    // BACKUP & RESTORE CONNECTION PROFILES
+    // ==========================================
+    fun exportProfilesPayload(): String {
+        val profiles = loadProfiles()
+        val root = JSONObject().apply {
+            put("format", "HERMES_PROFILES_BACKUP")
+            put("version", 1)
+            put("exported_at", System.currentTimeMillis())
+            val arr = JSONArray()
+            for (p in profiles) {
+                val obj = JSONObject().apply {
+                    put("id", p.id)
+                    put("name", p.name.removeEmojis().trim().ifBlank { p.name })
+                    put("sshHost", p.config.sshHost)
+                    put("sshPort", p.config.sshPort)
+                    put("sshUser", p.config.sshUser)
+                    put("sshPassword", p.config.sshPassword)
+                    put("hermesBaseUrl", p.config.hermesBaseUrl)
+                    put("hermesApiKey", p.config.hermesApiKey)
+                    put("hermesModel", p.config.hermesModel)
+                }
+                arr.put(obj)
+            }
+            put("profiles", arr)
+        }
+        val jsonStr = root.toString(2)
+        val base64 = Base64.encodeToString(jsonStr.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        return "HERMES_BACKUP_V1:$base64"
+    }
+
+    fun importProfilesPayload(rawInput: String): Result<List<ConnectionProfile>> {
+        return try {
+            val cleanInput = rawInput.trim()
+            val jsonStr = when {
+                cleanInput.startsWith("HERMES_BACKUP_V1:") -> {
+                    val b64 = cleanInput.removePrefix("HERMES_BACKUP_V1:").trim()
+                    String(Base64.decode(b64, Base64.NO_WRAP), Charsets.UTF_8)
+                }
+                cleanInput.startsWith("{") -> {
+                    cleanInput
+                }
+                else -> {
+                    try {
+                        String(Base64.decode(cleanInput, Base64.NO_WRAP), Charsets.UTF_8)
+                    } catch (_: Exception) {
+                        cleanInput
+                    }
+                }
+            }
+
+            val root = JSONObject(jsonStr)
+            val arr = root.optJSONArray("profiles") ?: JSONArray()
+            if (arr.length() == 0) {
+                return Result.failure(IllegalArgumentException("Backup kosong atau tidak memiliki profil valid"))
+            }
+
+            val importedProfiles = mutableListOf<ConnectionProfile>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val id = obj.optString("id", "profile_${System.currentTimeMillis()}_$i")
+                val name = obj.optString("name", "Profil ${i + 1}").removeEmojis().trim().ifBlank { "Profil ${i + 1}" }
+                val host = obj.optString("sshHost", "")
+                val port = obj.optInt("sshPort", 22)
+                val user = obj.optString("sshUser", "admin")
+                val pass = obj.optString("sshPassword", "")
+                val hermesUrl = obj.optString("hermesBaseUrl", "https://100.x.y.z:11434")
+                val hermesKey = obj.optString("hermesApiKey", "")
+                val hermesModel = obj.optString("hermesModel", "hermes-3-llama-3.1-8b")
+
+                val config = ServerConfig(
+                    sshHost = host,
+                    sshPort = if (port in 1..65535) port else 22,
+                    sshUser = user,
+                    sshPassword = pass,
+                    hermesBaseUrl = hermesUrl,
+                    hermesApiKey = hermesKey,
+                    hermesModel = hermesModel
+                )
+                importedProfiles.add(ConnectionProfile(id = id, name = name, config = config))
+            }
+
+            if (importedProfiles.isEmpty()) {
+                return Result.failure(IllegalArgumentException("Format backup tidak valid: profil kosong"))
+            }
+
+            // Save to Encrypted Keystore
+            for (p in importedProfiles) {
+                saveProfile(p)
+            }
+            saveProfileIds(importedProfiles.map { it.id })
+            setActiveProfileId(importedProfiles.first().id)
+            saveConfig(importedProfiles.first().config)
+
+            Result.success(importedProfiles)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+}
+
+private fun String.removeEmojis(): String {
+    return this.replace(Regex("[\\p{So}\\p{Sk}\\p{Sm}\\p{Sc}\\p{Cs}\\uD83C-\\uDBFF\\uDC00-\\uDFFF\\u2600-\\u26FF\\u2700-\\u27BF]"), "").trim()
 }

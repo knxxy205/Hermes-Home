@@ -250,6 +250,44 @@ class SettingsViewModel(
         onConfigUpdated(config)
     }
 
+    fun exportProfiles(): String {
+        // Auto-save current form into active profile before exporting
+        val state = _uiState.value
+        val config = state.buildServerConfig()
+        val currentDraft = state.activeProfile.copy(
+            name = state.profileName.ifBlank { "Profil ${state.activeProfileId}" },
+            config = config
+        )
+        encryptedStorage.saveProfile(currentDraft)
+        return encryptedStorage.exportProfilesPayload()
+    }
+
+    fun importProfiles(payload: String, onConfigUpdated: (ServerConfig) -> Unit): Result<Int> {
+        val result = encryptedStorage.importProfilesPayload(payload)
+        return result.mapCatching { importedList ->
+            val first = importedList.first()
+            _uiState.update {
+                it.copy(
+                    profiles = importedList,
+                    activeProfileId = first.id,
+                    profileName = first.name,
+                    host = first.config.sshHost,
+                    portText = first.config.sshPort.toString(),
+                    user = first.config.sshUser,
+                    password = first.config.sshPassword,
+                    hermesUrl = first.config.hermesBaseUrl,
+                    hermesKey = first.config.hermesApiKey,
+                    hermesModel = first.config.hermesModel,
+                    sshTestResult = null,
+                    hermesTestResult = null,
+                    statusMessage = "${importedList.size} Profil berhasil dipulihkan!"
+                )
+            }
+            onConfigUpdated(first.config)
+            importedList.size
+        }
+    }
+
     fun testSshConnection() {
         val state = _uiState.value
         val cfg = state.buildServerConfig()

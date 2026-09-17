@@ -750,22 +750,38 @@ fun HermesChatScreen(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Standalone Circular Send Button
+            // Standalone Circular Send / Enter Button (Always active solid orange, matching Terminal)
             IconButton(
-                onClick = { doSendMessage(inputText) },
-                enabled = inputText.isNotBlank() && !isSending,
+                onClick = {
+                    if (!isSending) {
+                        if (inputText.isNotBlank()) {
+                            doSendMessage(inputText)
+                        } else {
+                            Toast.makeText(context, "Ketik pesan untuk Hermes", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                enabled = true,
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
-                    .background(if (inputText.isNotBlank() && !isSending) BurntOrange else BurntOrange.copy(alpha = 0.25f))
+                    .background(BurntOrange)
                     .testTag("hermes_send_button")
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Send",
-                    tint = if (inputText.isNotBlank() && !isSending) NavyDarkBackground else TextSecondary,
-                    modifier = Modifier.size(20.dp)
-                )
+                if (isSending) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = NavyDarkBackground,
+                        strokeWidth = 2.5.dp
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "Send",
+                        tint = NavyDarkBackground,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
 

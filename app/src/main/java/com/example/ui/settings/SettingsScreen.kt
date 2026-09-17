@@ -1,5 +1,9 @@
 package com.example.ui.settings
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -25,18 +29,25 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -46,9 +57,13 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -98,11 +113,235 @@ fun SettingsScreen(
     val scrollState = rememberScrollState()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+    var showExportDialog by remember { mutableStateOf(false) }
+    var exportPayloadText by remember { mutableStateOf("") }
+    var showImportDialog by remember { mutableStateOf(false) }
+    var importInputText by remember { mutableStateOf("") }
+    var showImportConfirmDialog by remember { mutableStateOf(false) }
+
     LaunchedEffect(uiState.statusMessage) {
         uiState.statusMessage?.let { msg ->
             Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
             viewModel.clearStatusMessage()
         }
+    }
+
+    // Export Dialog
+    if (showExportDialog) {
+        AlertDialog(
+            onDismissRequest = { showExportDialog = false },
+            containerColor = NavyDarkCard,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.FileDownload, contentDescription = null, tint = BurntOrange, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Export Connection Profiles", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "String backup dienkripsi dalam Base64. Anda dapat menyalin teks ini untuk dicadangkan atau ditransfer.",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
+                    OutlinedTextField(
+                        value = exportPayloadText,
+                        onValueChange = {},
+                        readOnly = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(110.dp),
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = TextPrimary
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BurntOrange,
+                            unfocusedBorderColor = NavyDarkBorder,
+                            focusedContainerColor = NavyDarkSurface,
+                            unfocusedContainerColor = NavyDarkSurface
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("Hermes Backup", exportPayloadText)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "Backup Copied!", Toast.LENGTH_SHORT).show()
+                        showExportDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = NavyDarkBackground)
+                ) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Copy to Clipboard", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                Row {
+                    OutlinedButton(
+                        onClick = {
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, "Hermes Connection Profiles Backup")
+                                putExtra(Intent.EXTRA_TEXT, exportPayloadText)
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, "Share Backup"))
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                        border = BorderStroke(1.dp, NavyDarkBorder)
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Share", fontSize = 12.sp)
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    TextButton(onClick = { showExportDialog = false }) {
+                        Text("Tutup", color = TextSecondary, fontSize = 12.sp)
+                    }
+                }
+            }
+        )
+    }
+
+    // Import Dialog
+    if (showImportDialog) {
+        AlertDialog(
+            onDismissRequest = { showImportDialog = false },
+            containerColor = NavyDarkCard,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.FileUpload, contentDescription = null, tint = BurntOrange, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Import Connection Profiles", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Tempelkan string backup (format HERMES_BACKUP_V1:... atau Base64) untuk memulihkan seluruh profil koneksi.",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
+
+                    OutlinedTextField(
+                        value = importInputText,
+                        onValueChange = { importInputText = it },
+                        placeholder = { Text("HERMES_BACKUP_V1:...", color = TextSecondary.copy(alpha = 0.5f), fontSize = 12.sp) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(110.dp),
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = TextPrimary
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BurntOrange,
+                            unfocusedBorderColor = NavyDarkBorder,
+                            focusedContainerColor = NavyDarkSurface,
+                            unfocusedContainerColor = NavyDarkSurface
+                        )
+                    )
+
+                    // Quick Paste button
+                    OutlinedButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clipItem = clipboard.primaryClip?.getItemAt(0)
+                            val text = clipItem?.text?.toString() ?: ""
+                            if (text.isNotBlank()) {
+                                importInputText = text.trim()
+                                Toast.makeText(context, "Teks ditempel dari clipboard", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Clipboard kosong", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(36.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BurntOrange),
+                        border = BorderStroke(1.dp, BurntOrange.copy(alpha = 0.5f)),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(14.dp), tint = BurntOrange)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Paste from Clipboard", fontSize = 12.sp, color = BurntOrange)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (importInputText.isBlank()) {
+                            Toast.makeText(context, "Masukkan string backup terlebih dahulu", Toast.LENGTH_SHORT).show()
+                        } else {
+                            showImportConfirmDialog = true
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = NavyDarkBackground)
+                ) {
+                    Text("Lanjutkan Import", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportDialog = false }) {
+                    Text("Batal", color = TextSecondary, fontSize = 12.sp)
+                }
+            }
+        )
+    }
+
+    // Import Confirmation Dialog
+    if (showImportConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showImportConfirmDialog = false },
+            containerColor = NavyDarkCard,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Warning, contentDescription = null, tint = BurntOrange, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Konfirmasi Restore Profil", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            },
+            text = {
+                Text(
+                    text = "Importing will overwrite current profiles. Continue?",
+                    color = TextSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showImportConfirmDialog = false
+                        val res = viewModel.importProfiles(importInputText, onConfigUpdated)
+                        res.onSuccess { count ->
+                            Toast.makeText(context, "Profiles Restored! ($count profil)", Toast.LENGTH_SHORT).show()
+                            showImportDialog = false
+                            importInputText = ""
+                        }.onFailure { err ->
+                            Toast.makeText(context, "Gagal import: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = NavyDarkBackground)
+                ) {
+                    Text("Ya, Timpa & Restore", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportConfirmDialog = false }) {
+                    Text("Batal", color = TextSecondary, fontSize = 12.sp)
+                }
+            }
+        )
     }
 
     Column(
@@ -170,7 +409,7 @@ fun SettingsScreen(
                         lineHeight = 16.sp
                     )
 
-                    // Profiles Horizontal Chips Bar
+                    // Profiles Horizontal Chips Bar (Clean Material Icons, No Emojis in Text)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -180,6 +419,9 @@ fun SettingsScreen(
                     ) {
                         uiState.profiles.forEach { profile ->
                             val isSelected = profile.id == uiState.activeProfileId
+                            val isHome = profile.id == ConnectionProfile.PROFILE_HOME_ID || profile.name.contains("Rumah", ignoreCase = true) || profile.name.contains("LAN", ignoreCase = true)
+                            val isTailscale = profile.id == ConnectionProfile.PROFILE_TAILSCALE_ID || profile.name.contains("Tailscale", ignoreCase = true) || profile.name.contains("Luar", ignoreCase = true)
+                            
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(12.dp))
@@ -194,7 +436,11 @@ fun SettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
-                                    imageVector = if (profile.id == ConnectionProfile.PROFILE_HOME_ID) Icons.Default.Home else Icons.Default.Public,
+                                    imageVector = when {
+                                        isHome -> Icons.Default.Home
+                                        isTailscale -> Icons.Default.Public
+                                        else -> Icons.Default.Dns
+                                    },
                                     contentDescription = null,
                                     tint = if (isSelected) BurntOrange else TextSecondary,
                                     modifier = Modifier.size(16.dp)
@@ -258,6 +504,45 @@ fun SettingsScreen(
                             }
                         }
                     }
+
+                    // Backup & Restore Action Bar
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                exportPayloadText = viewModel.exportProfiles()
+                                showExportDialog = true
+                            },
+                            modifier = Modifier.weight(1f).height(38.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = BurntOrange),
+                            border = BorderStroke(1.dp, BurntOrange.copy(alpha = 0.6f)),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(15.dp), tint = BurntOrange)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Export Profiles", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BurntOrange)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                importInputText = ""
+                                showImportDialog = true
+                            },
+                            modifier = Modifier.weight(1f).height(38.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                            border = BorderStroke(1.dp, NavyDarkBorder),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(15.dp), tint = TextSecondary)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Import Profiles", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextSecondary)
+                        }
+                    }
                 }
             }
 
@@ -266,42 +551,56 @@ fun SettingsScreen(
                 backgroundColor = NavyDarkCard,
                 borderColor = NavyCardBorder
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(BurntOrangeBadgeBg)
-                            .border(1.dp, BurntOrangeBorder, RoundedCornerShape(12.dp)),
-                        contentAlignment = Alignment.Center
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Icon(Icons.Default.Lock, contentDescription = null, tint = BurntOrange, modifier = Modifier.size(20.dp))
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f, fill = false)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(BurntOrangeBadgeBg)
+                                    .border(1.dp, BurntOrangeBorder, RoundedCornerShape(10.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = BurntOrange,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Keystore Enkripsi AES-256-GCM",
+                                text = "Keystore AES-256-GCM",
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
+                                fontSize = 14.sp
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            StatusBadge(text = "HARDWARE SECURE", isSuccess = true)
                         }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "Kredensial disimpan terenkripsi di chip keamanan Android KeyStore. Tidak ada cleartext atau Base64 fallback.",
-                            color = TextSecondary,
-                            fontSize = 11.sp,
-                            lineHeight = 15.sp
+                        Spacer(modifier = Modifier.width(8.dp))
+                        StatusBadge(
+                            text = "HARDWARE SECURE",
+                            isSuccess = true
                         )
                     }
+                    Text(
+                        text = "Kredensial disimpan terenkripsi di chip keamanan Android KeyStore. Tidak ada cleartext atau Base64 fallback.",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
                 }
             }
 

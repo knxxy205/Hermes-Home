@@ -11,7 +11,7 @@ data class ConnectionProfile(
 
         fun defaultHomeProfile(): ConnectionProfile = ConnectionProfile(
             id = PROFILE_HOME_ID,
-            name = "🏠 Rumah (LAN)",
+            name = "Rumah (LAN)",
             config = ServerConfig(
                 sshHost = "192.168.1.100",
                 sshPort = 22,
@@ -25,7 +25,7 @@ data class ConnectionProfile(
 
         fun defaultTailscaleProfile(): ConnectionProfile = ConnectionProfile(
             id = PROFILE_TAILSCALE_ID,
-            name = "🌐 Di Luar (Tailscale)",
+            name = "Di Luar (Tailscale)",
             config = ServerConfig(
                 sshHost = "100.x.y.z",
                 sshPort = 22,
