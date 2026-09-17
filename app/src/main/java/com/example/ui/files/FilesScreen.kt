@@ -1,6 +1,11 @@
 package com.example.ui.files
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,6 +32,7 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
@@ -41,6 +47,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -87,6 +94,28 @@ import com.example.ui.theme.TextSecondary
 import kotlinx.coroutines.launch
 import java.io.File
 
+private fun getFileNameFromUri(context: Context, uri: Uri): String {
+    var result = "upload_${System.currentTimeMillis()}"
+    if (uri.scheme == "content") {
+        try {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val displayNameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (displayNameIndex != -1) {
+                        val name = cursor.getString(displayNameIndex)
+                        if (!name.isNullOrBlank()) {
+                            result = name
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+    } else if (uri.scheme == "file") {
+        uri.lastPathSegment?.let { if (it.isNotBlank()) result = it }
+    }
+    return result
+}
+
 @Composable
 fun FilesScreen(
     sftpManager: SftpManager,
@@ -118,6 +147,9 @@ fun FilesScreen(
 
     var fileContentToView by remember { mutableStateOf<Pair<String, String>?>(null) }
 
+    var isUploading by remember { mutableStateOf(false) }
+    var uploadingFileName by remember { mutableStateOf<String?>(null) }
+
     fun refreshFiles() {
         isLoading = true
         errorMessage = null
@@ -136,6 +168,47 @@ fun FilesScreen(
         }
     }
 
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val fileName = getFileNameFromUri(context, uri)
+            isUploading = true
+            uploadingFileName = fileName
+            Toast.makeText(context, "Mengunggah: $fileName...", Toast.LENGTH_SHORT).show()
+            scope.launch {
+                try {
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                    if (inputStream == null) {
+                        Toast.makeText(context, "Gagal membuka file lokal", Toast.LENGTH_SHORT).show()
+                        isUploading = false
+                        uploadingFileName = null
+                        return@launch
+                    }
+                    val result = sftpManager.uploadFile(
+                        parentPath = currentPath,
+                        fileName = fileName,
+                        inputStream = inputStream,
+                        config = serverConfig,
+                        useSandbox = !serverConfig.isSshConfigured
+                    )
+                    isUploading = false
+                    uploadingFileName = null
+                    result.onSuccess {
+                        Toast.makeText(context, "File berhasil diunggah: $fileName", Toast.LENGTH_LONG).show()
+                        refreshFiles()
+                    }.onFailure { err ->
+                        Toast.makeText(context, "Upload gagal: ${err.localizedMessage ?: err.message}", Toast.LENGTH_LONG).show()
+                    }
+                } catch (e: Exception) {
+                    isUploading = false
+                    uploadingFileName = null
+                    Toast.makeText(context, "Error upload: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     LaunchedEffect(currentPath, serverConfig) {
         refreshFiles()
     }
@@ -145,226 +218,312 @@ fun FilesScreen(
         else fileList.filter { it.name.contains(searchQuery, ignoreCase = true) }
     }
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(NavyDarkBackground)
     ) {
-        // Custom Screen Header
-        CustomScreenHeader(
-            icon = Icons.Default.FolderOpen,
-            title = "Files",
-            subtitle = if (serverConfig.isSshConfigured) "SFTP Browser (${serverConfig.sshHost})" else "SFTP Sandbox Browser",
-            trailingContent = {
-                Row {
-                    IconButton(
-                        onClick = { showNewFolderDialog = true },
-                        modifier = Modifier.testTag("new_folder_button")
-                    ) {
-                        Icon(
-                            Icons.Default.CreateNewFolder,
-                            contentDescription = "New Folder",
-                            tint = BurntOrange
-                        )
-                    }
-                    IconButton(
-                        onClick = { showNewFileDialog = true },
-                        modifier = Modifier.testTag("new_file_button")
-                    ) {
-                        Icon(
-                            Icons.Default.NoteAdd,
-                            contentDescription = "New File",
-                            tint = BurntOrange
-                        )
-                    }
-                }
-            }
-        )
-
-        // Path Navigation & Action Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(NavyDarkSurface)
-                .border(1.dp, NavyDarkBorder, RoundedCornerShape(12.dp))
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.fillMaxSize()
         ) {
-            IconButton(
-                onClick = {
-                    if (currentPath != "/" && currentPath.contains("/")) {
-                        val parent = currentPath.substringBeforeLast("/")
-                        currentPath = if (parent.isBlank()) "/" else parent
-                    }
-                },
-                enabled = currentPath != "/"
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Go Up",
-                    tint = if (currentPath != "/") BurntOrange else TextSecondary.copy(alpha = 0.4f),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            Text(
-                text = currentPath,
-                color = TextPrimary,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-            )
-
-            IconButton(onClick = { refreshFiles() }) {
-                Icon(
-                    Icons.Default.Refresh,
-                    contentDescription = "Refresh",
-                    tint = BurntOrange,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
-
-        // Search Bar
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            placeholder = { Text("Cari file atau folder...", color = TextSecondary, fontSize = 13.sp) },
-            leadingIcon = {
-                Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(18.dp))
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = NavyDarkCard,
-                unfocusedContainerColor = NavyDarkCard,
-                focusedBorderColor = BurntOrange,
-                unfocusedBorderColor = NavyDarkBorder,
-                focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp)
-                .height(50.dp)
-        )
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        // Content Area
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-        ) {
-            when {
-                isLoading -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = BurntOrange)
-                    }
-                }
-                errorMessage != null -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = errorMessage ?: "Error",
-                            color = TerminalRed,
-                            fontSize = 14.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Button(
-                            onClick = { refreshFiles() },
-                            colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
+            // Custom Screen Header
+            CustomScreenHeader(
+                icon = Icons.Default.FolderOpen,
+                title = "Files",
+                subtitle = if (serverConfig.isSshConfigured) "SFTP Browser (${serverConfig.sshHost})" else "SFTP Sandbox Browser",
+                trailingContent = {
+                    Row {
+                        IconButton(
+                            onClick = { filePickerLauncher.launch("*/*") },
+                            modifier = Modifier.testTag("upload_file_button")
                         ) {
-                            Text("Coba Lagi", color = NavyDarkBackground)
+                            Icon(
+                                Icons.Default.FileUpload,
+                                contentDescription = "Upload File",
+                                tint = BurntOrange
+                            )
                         }
-                    }
-                }
-                filteredList.isEmpty() -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            Icons.Default.FolderOpen,
-                            contentDescription = null,
-                            tint = TextSecondary.copy(alpha = 0.4f),
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("Folder kosong", color = TextSecondary, fontSize = 14.sp)
-                    }
-                }
-                else -> {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(filteredList, key = { it.path }) { item ->
-                            FileItemCard(
-                                item = item,
-                                onOpen = {
-                                    if (item.isDirectory) {
-                                        currentPath = item.path
-                                    } else {
-                                        scope.launch {
-                                            isLoading = true
-                                            val contentResult = sftpManager.readFileContent(
-                                                item.path,
-                                                serverConfig,
-                                                useSandbox = !serverConfig.isSshConfigured
-                                            )
-                                            isLoading = false
-                                            contentResult.onSuccess { content ->
-                                                fileContentToView = Pair(item.name, content)
-                                            }.onFailure {
-                                                Toast.makeText(context, "Gagal membuka file: ${it.message}", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                    }
-                                },
-                                onRename = {
-                                    itemToRename = item
-                                    renameNewName = item.name
-                                },
-                                onDelete = {
-                                    itemToDelete = item
-                                },
-                                onDownload = {
-                                    scope.launch {
-                                        val dest = File(context.cacheDir, item.name)
-                                        val res = sftpManager.downloadToLocal(
-                                            item.path,
-                                            dest,
-                                            serverConfig,
-                                            useSandbox = !serverConfig.isSshConfigured
-                                        )
-                                        res.onSuccess {
-                                            Toast.makeText(context, "Disimpan ke: ${it.name} (${item.formattedSize})", Toast.LENGTH_LONG).show()
-                                        }.onFailure {
-                                            Toast.makeText(context, "Download gagal: ${it.message}", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
+                        IconButton(
+                            onClick = { showNewFolderDialog = true },
+                            modifier = Modifier.testTag("new_folder_button")
+                        ) {
+                            Icon(
+                                Icons.Default.CreateNewFolder,
+                                contentDescription = "New Folder",
+                                tint = BurntOrange
+                            )
+                        }
+                        IconButton(
+                            onClick = { showNewFileDialog = true },
+                            modifier = Modifier.testTag("new_file_button")
+                        ) {
+                            Icon(
+                                Icons.Default.NoteAdd,
+                                contentDescription = "New File",
+                                tint = BurntOrange
                             )
                         }
                     }
                 }
+            )
+
+            // Path Navigation & Action Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(NavyDarkSurface)
+                    .border(1.dp, NavyDarkBorder, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = {
+                        if (currentPath != "/" && currentPath.contains("/")) {
+                            val parent = currentPath.substringBeforeLast("/")
+                            currentPath = if (parent.isBlank()) "/" else parent
+                        }
+                    },
+                    enabled = currentPath != "/"
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Go Up",
+                        tint = if (currentPath != "/") BurntOrange else TextSecondary.copy(alpha = 0.4f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Text(
+                    text = currentPath,
+                    color = TextPrimary,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                )
+
+                IconButton(onClick = { refreshFiles() }) {
+                    Icon(
+                        Icons.Default.Refresh,
+                        contentDescription = "Refresh",
+                        tint = BurntOrange,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            // Search Bar
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Cari file atau folder...", color = TextSecondary, fontSize = 13.sp) },
+                leadingIcon = {
+                    Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(18.dp))
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = NavyDarkCard,
+                    unfocusedContainerColor = NavyDarkCard,
+                    focusedBorderColor = BurntOrange,
+                    unfocusedBorderColor = NavyDarkBorder,
+                    focusedTextColor = TextPrimary,
+                    unfocusedTextColor = TextPrimary
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .height(50.dp)
+            )
+
+            // Upload in progress banner
+            if (isUploading) {
+                TailHarnessCard(
+                    backgroundColor = NavyDarkCard,
+                    borderColor = BurntOrange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            color = BurntOrange,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Mengunggah file ke $currentPath...",
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                            uploadingFileName?.let {
+                                Text(
+                                    text = it,
+                                    color = BurntOrange,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Content Area
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                when {
+                    isLoading -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = BurntOrange)
+                        }
+                    }
+                    errorMessage != null -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = errorMessage ?: "Error",
+                                color = TerminalRed,
+                                fontSize = 14.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = { refreshFiles() },
+                                colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
+                            ) {
+                                Text("Coba Lagi", color = NavyDarkBackground)
+                            }
+                        }
+                    }
+                    filteredList.isEmpty() -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                Icons.Default.FolderOpen,
+                                contentDescription = null,
+                                tint = TextSecondary.copy(alpha = 0.4f),
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text("Folder kosong", color = TextSecondary, fontSize = 14.sp)
+                        }
+                    }
+                    else -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(filteredList, key = { it.path }) { item ->
+                                FileItemCard(
+                                    item = item,
+                                    onOpen = {
+                                        if (item.isDirectory) {
+                                            currentPath = item.path
+                                        } else {
+                                            scope.launch {
+                                                isLoading = true
+                                                val contentResult = sftpManager.readFileContent(
+                                                    item.path,
+                                                    serverConfig,
+                                                    useSandbox = !serverConfig.isSshConfigured
+                                                )
+                                                isLoading = false
+                                                contentResult.onSuccess { content ->
+                                                    fileContentToView = Pair(item.name, content)
+                                                }.onFailure {
+                                                    Toast.makeText(context, "Gagal membuka file: ${it.message}", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onRename = {
+                                        itemToRename = item
+                                        renameNewName = item.name
+                                    },
+                                    onDelete = {
+                                        itemToDelete = item
+                                    },
+                                    onDownload = {
+                                        scope.launch {
+                                            val dest = File(context.cacheDir, item.name)
+                                            val res = sftpManager.downloadToLocal(
+                                                item.path,
+                                                dest,
+                                                serverConfig,
+                                                useSandbox = !serverConfig.isSshConfigured
+                                            )
+                                            res.onSuccess {
+                                                Toast.makeText(context, "Disimpan ke: ${it.name} (${item.formattedSize})", Toast.LENGTH_LONG).show()
+                                            }.onFailure {
+                                                Toast.makeText(context, "Download gagal: ${it.message}", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Floating Action Button for quick upload
+        FloatingActionButton(
+            onClick = { filePickerLauncher.launch("*/*") },
+            containerColor = BurntOrange,
+            contentColor = NavyDarkBackground,
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(20.dp)
+                .testTag("upload_file_fab")
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.FileUpload,
+                    contentDescription = "Upload File",
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    "Upload File",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                )
             }
         }
     }

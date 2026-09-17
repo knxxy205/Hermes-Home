@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -373,14 +374,16 @@ fun TerminalScreen(
                     .verticalScroll(verticalScrollState)
                     .horizontalScroll(terminalHorizontalScrollState)
             ) {
-                Text(
-                    text = terminalAnnotatedOutput,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp,
-                    color = TerminalGreen,
-                    softWrap = !isInteractiveMode
-                )
+                SelectionContainer {
+                    Text(
+                        text = terminalAnnotatedOutput,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        color = TerminalGreen,
+                        softWrap = !isInteractiveMode
+                    )
+                }
             }
         }
 

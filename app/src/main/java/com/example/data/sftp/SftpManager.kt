@@ -10,6 +10,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -232,6 +233,48 @@ services:
             val bytes = content.toByteArray(Charsets.UTF_8)
             ByteArrayInputStream(bytes).use { inStream ->
                 sftp.put(inStream, targetPath)
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun uploadFile(
+        parentPath: String,
+        fileName: String,
+        inputStream: InputStream,
+        config: ServerConfig,
+        useSandbox: Boolean = false
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        val targetPath = if (parentPath.endsWith("/")) "$parentPath$fileName" else "$parentPath/$fileName"
+        if (useSandbox || !config.isSshConfigured) {
+            val bytes = inputStream.use { it.readBytes() }
+            val list = sandboxFiles.getOrPut(parentPath) { mutableListOf() }
+            list.removeAll { it.path == targetPath }
+            list.add(
+                RemoteFileItem(
+                    name = fileName,
+                    path = targetPath,
+                    isDirectory = false,
+                    sizeBytes = bytes.size.toLong(),
+                    permissions = "-rw-r--r--",
+                    modifiedTime = System.currentTimeMillis() / 1000
+                )
+            )
+            val contentPreview = try {
+                String(bytes, Charsets.UTF_8)
+            } catch (_: Exception) {
+                "[Binary File (${bytes.size} bytes)]"
+            }
+            sandboxFileContents[targetPath] = contentPreview
+            return@withContext Result.success(Unit)
+        }
+
+        try {
+            val sftp = getConnectedSftp(config)
+            inputStream.use { stream ->
+                sftp.put(stream, targetPath)
             }
             Result.success(Unit)
         } catch (e: Exception) {
