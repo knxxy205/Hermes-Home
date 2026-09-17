@@ -60,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -115,6 +116,7 @@ fun TerminalScreen(
 
     var inputCommand by remember { mutableStateOf("") }
     var isCtrlActive by remember { mutableStateOf(false) }
+    var isWordWrapEnabled by remember { mutableStateOf(true) }
 
     // Custom snippets state
     var snippets by remember {
@@ -357,31 +359,31 @@ fun TerminalScreen(
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        // Main Terminal Output Window (Near-black background with bright green/ANSI text)
+        // Main Terminal Output Window (Termius Dark #0A0A0A canvas with pastel green monospace text)
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(TerminalBg)
-                .border(1.dp, NavyCardBorder, RoundedCornerShape(12.dp))
-                .padding(12.dp)
+                .padding(horizontal = 8.dp, vertical = 2.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF0A0A0A))
+                .border(1.dp, NavyCardBorder, RoundedCornerShape(10.dp))
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(verticalScrollState)
                     .horizontalScroll(terminalHorizontalScrollState)
+                    .padding(14.dp)
             ) {
                 SelectionContainer {
                     Text(
                         text = terminalAnnotatedOutput,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        lineHeight = 18.sp,
-                        color = TerminalGreen,
-                        softWrap = !isInteractiveMode
+                        fontSize = 13.sp,
+                        lineHeight = 20.sp,
+                        color = Color(0xFFA8D08D),
+                        softWrap = false
                     )
                 }
             }
@@ -401,9 +403,9 @@ fun TerminalScreen(
             // "+ Tambah" Action Button for Custom Snippet
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(8.dp))
                     .background(BurntOrangePillBg)
-                    .border(1.dp, BurntOrangeBorder, RoundedCornerShape(16.dp))
+                    .border(1.dp, BurntOrangeBorder, RoundedCornerShape(8.dp))
                     .clickable {
                         newSnippetName = ""
                         newSnippetCommand = ""
@@ -431,12 +433,12 @@ fun TerminalScreen(
             for (snip in snippets) {
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(if (snip.isDefault) NavyDarkSurface else BurntOrangeBadgeBg.copy(alpha = 0.5f))
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (snip.isDefault) Color(0xFF1E2636) else BurntOrangeBadgeBg.copy(alpha = 0.5f))
                         .border(
                             width = 1.dp,
-                            color = if (snip.isDefault) NavyDarkBorder else BurntOrangeBorder,
-                            shape = RoundedCornerShape(16.dp)
+                            color = if (snip.isDefault) Color(0xFF2D394E) else BurntOrangeBorder,
+                            shape = RoundedCornerShape(8.dp)
                         )
                         .combinedClickable(
                             onClick = {
@@ -526,6 +528,18 @@ fun TerminalScreen(
             ShortcutKeyButton(label = "←", onClick = { activeSession.sendKeyLeft() })
             ShortcutKeyButton(label = "→", onClick = { activeSession.sendKeyRight() })
             ShortcutKeyButton(label = "CLEAR", onClick = { activeSession.clearBuffer() })
+            ShortcutKeyButton(
+                label = if (isWordWrapEnabled) "WRAP" else "NOWRAP",
+                isActive = isWordWrapEnabled,
+                onClick = {
+                    isWordWrapEnabled = !isWordWrapEnabled
+                    Toast.makeText(
+                        context,
+                        if (isWordWrapEnabled) "Word Wrap: Aktif" else "Horizontal Scroll: Aktif",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            )
         }
 
         Spacer(modifier = Modifier.height(6.dp))

@@ -187,17 +187,17 @@ fun ShortcutKeyButton(
     isActive: Boolean = false,
     highlightColor: Color = BurntOrange
 ) {
-    val bg = if (isActive) highlightColor else NavyDarkSurface
-    val borderColor = if (isActive) highlightColor else NavyDarkBorder
-    val textColor = if (isActive) NavyDarkBackground else highlightColor
+    val bg = if (isActive) highlightColor else Color(0xFF1E2636)
+    val borderColor = if (isActive) highlightColor else Color(0xFF2D394E)
+    val textColor = if (isActive) Color(0xFF0A0E17) else if (label.startsWith("^") || label == "CTRL" || label == "ESC" || label == "TAB") BurntOrange else Color(0xFFE2E8F0)
 
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(50))
+            .clip(RoundedCornerShape(8.dp))
             .background(bg)
-            .border(1.dp, borderColor, RoundedCornerShape(50))
+            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
             .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 14.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
