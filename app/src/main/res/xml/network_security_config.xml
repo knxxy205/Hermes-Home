@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 
+      GLOBAL POLICY: Cleartext (unencrypted HTTP) traffic is strictly prohibited.
+      Protects against Man-in-the-Middle (MITM) attacks on public networks.
+    -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- 
+      Scoped Exception: Permitted ONLY for local private networks, localhost, and Tailscale nodes
+      when accessing private self-hosted homeserver daemons without SSL certificates.
+    -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">ts.net</domain>
+        <!-- Standard RFC1918 Private LAN Ranges -->
+        <domain includeSubdomains="true">10.0.0.1</domain>
+        <domain includeSubdomains="true">192.168.1.1</domain>
+    </domain-config>
+</network-security-config>

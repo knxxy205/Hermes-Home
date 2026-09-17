@@ -89,8 +89,8 @@ class EncryptedStorage(context: Context) {
             byteBuffer.put(cipherText)
             Base64.encodeToString(byteBuffer.array(), Base64.NO_WRAP)
         } catch (e: Exception) {
-            // Fallback for environments where AndroidKeyStore provider is simulated or mocked
-            Base64.encodeToString(plainText.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+            android.util.Log.e("EncryptedStorage", "Enkripsi gagal pada AndroidKeyStore AES-GCM", e)
+            "" // Strictly return empty string on encryption failure to prevent saving plaintext or weak encoding
         }
     }
 
@@ -99,7 +99,7 @@ class EncryptedStorage(context: Context) {
         return try {
             val combined = Base64.decode(encryptedBase64, Base64.NO_WRAP)
             if (combined.size <= GCM_IV_LENGTH) {
-                return String(combined, Charsets.UTF_8)
+                return ""
             }
             val secretKey = getOrCreateSecretKey()
             val iv = ByteArray(GCM_IV_LENGTH)
@@ -114,12 +114,8 @@ class EncryptedStorage(context: Context) {
             val decryptedBytes = cipher.doFinal(cipherText)
             String(decryptedBytes, Charsets.UTF_8)
         } catch (e: Exception) {
-            try {
-                // Fallback attempt
-                String(Base64.decode(encryptedBase64, Base64.NO_WRAP), Charsets.UTF_8)
-            } catch (ex: Exception) {
-                ""
-            }
+            android.util.Log.e("EncryptedStorage", "Dekripsi gagal pada ciphertext", e)
+            ""
         }
     }
 

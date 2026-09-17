@@ -17,7 +17,7 @@ data class ConnectionProfile(
                 sshPort = 22,
                 sshUser = "admin",
                 sshPassword = "",
-                hermesBaseUrl = "http://192.168.1.100:11434",
+                hermesBaseUrl = "https://192.168.1.100:11434",
                 hermesApiKey = "",
                 hermesModel = "hermes-3-llama-3.1-8b"
             )
@@ -31,7 +31,7 @@ data class ConnectionProfile(
                 sshPort = 22,
                 sshUser = "admin",
                 sshPassword = "",
-                hermesBaseUrl = "http://100.x.y.z:11434",
+                hermesBaseUrl = "https://100.x.y.z:11434",
                 hermesApiKey = "",
                 hermesModel = "hermes-3-llama-3.1-8b"
             )
