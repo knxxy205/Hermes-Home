@@ -2,13 +2,11 @@ package com.example.ui.files
 
 import android.content.Context
 import android.net.Uri
-import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,17 +48,16 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,6 +70,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.model.ServerConfig
 import com.example.data.sftp.RemoteFileItem
 import com.example.data.sftp.SftpManager
@@ -91,48 +89,46 @@ import com.example.ui.theme.TerminalGreen
 import com.example.ui.theme.TerminalRed
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
-import kotlinx.coroutines.launch
 import java.io.File
-
-private fun getFileNameFromUri(context: Context, uri: Uri): String {
-    var result = "upload_${System.currentTimeMillis()}"
-    if (uri.scheme == "content") {
-        try {
-            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val displayNameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (displayNameIndex != -1) {
-                        val name = cursor.getString(displayNameIndex)
-                        if (!name.isNullOrBlank()) {
-                            result = name
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-    } else if (uri.scheme == "file") {
-        uri.lastPathSegment?.let { if (it.isNotBlank()) result = it }
-    }
-    return result
-}
 
 @Composable
 fun FilesScreen(
     sftpManager: SftpManager,
     serverConfig: ServerConfig,
+    viewModel: FilesViewModel = viewModel(factory = FilesViewModel.provideFactory(sftpManager)),
     onAskHermesAboutFile: ((fileName: String, content: String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val uiState by viewModel.uiState.collectAsState()
 
-    var currentPath by remember { mutableStateOf("/") }
-    var fileList by remember { mutableStateOf<List<RemoteFileItem>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var searchQuery by remember { mutableStateOf("") }
+    // 1. File Picker Contract initialized safely in the root Composable scope
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.uploadFile(
+                context = context.applicationContext,
+                uri = uri,
+                config = serverConfig
+            )
+        }
+    }
 
-    // Dialog states
+    // Safe launch helper for file picker
+    val launchFilePicker = {
+        try {
+            filePickerLauncher.launch("*/*")
+        } catch (e: Exception) {
+            Toast.makeText(
+                context,
+                "Tidak dapat membuka pemilih berkas: ${e.localizedMessage ?: e.message}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    // Dialog states for user input
     var showNewFolderDialog by remember { mutableStateOf(false) }
     var newFolderName by remember { mutableStateOf("") }
 
@@ -145,77 +141,22 @@ fun FilesScreen(
 
     var itemToDelete by remember { mutableStateOf<RemoteFileItem?>(null) }
 
-    var fileContentToView by remember { mutableStateOf<Pair<String, String>?>(null) }
-
-    var isUploading by remember { mutableStateOf(false) }
-    var uploadingFileName by remember { mutableStateOf<String?>(null) }
-
-    fun refreshFiles() {
-        isLoading = true
-        errorMessage = null
-        scope.launch {
-            val result = sftpManager.listFiles(
-                currentPath = currentPath,
-                config = serverConfig,
-                useSandbox = !serverConfig.isSshConfigured
-            )
-            isLoading = false
-            result.onSuccess {
-                fileList = it
-            }.onFailure { error ->
-                errorMessage = error.localizedMessage ?: "Gagal memuat daftar file SFTP"
-            }
+    // Observe status messages for feedback
+    LaunchedEffect(uiState.statusMessage) {
+        uiState.statusMessage?.let { msg ->
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            viewModel.clearStatusMessage()
         }
     }
 
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            val fileName = getFileNameFromUri(context, uri)
-            isUploading = true
-            uploadingFileName = fileName
-            Toast.makeText(context, "Mengunggah: $fileName...", Toast.LENGTH_SHORT).show()
-            scope.launch {
-                try {
-                    val inputStream = context.contentResolver.openInputStream(uri)
-                    if (inputStream == null) {
-                        Toast.makeText(context, "Gagal membuka file lokal", Toast.LENGTH_SHORT).show()
-                        isUploading = false
-                        uploadingFileName = null
-                        return@launch
-                    }
-                    val result = sftpManager.uploadFile(
-                        parentPath = currentPath,
-                        fileName = fileName,
-                        inputStream = inputStream,
-                        config = serverConfig,
-                        useSandbox = !serverConfig.isSshConfigured
-                    )
-                    isUploading = false
-                    uploadingFileName = null
-                    result.onSuccess {
-                        Toast.makeText(context, "File berhasil diunggah: $fileName", Toast.LENGTH_LONG).show()
-                        refreshFiles()
-                    }.onFailure { err ->
-                        Toast.makeText(context, "Upload gagal: ${err.localizedMessage ?: err.message}", Toast.LENGTH_LONG).show()
-                    }
-                } catch (e: Exception) {
-                    isUploading = false
-                    uploadingFileName = null
-                    Toast.makeText(context, "Error upload: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
+    // Initial load and reload when config changes
+    LaunchedEffect(serverConfig) {
+        viewModel.loadFiles(config = serverConfig)
     }
 
-    LaunchedEffect(currentPath, serverConfig) {
-        refreshFiles()
-    }
-
-    val filteredList = remember(fileList, searchQuery) {
-        if (searchQuery.isBlank()) fileList
-        else fileList.filter { it.name.contains(searchQuery, ignoreCase = true) }
+    val filteredList = remember(uiState.files, uiState.searchQuery) {
+        if (uiState.searchQuery.isBlank()) uiState.files
+        else uiState.files.filter { it.name.contains(uiState.searchQuery, ignoreCase = true) }
     }
 
     Box(
@@ -234,7 +175,7 @@ fun FilesScreen(
                 trailingContent = {
                     Row {
                         IconButton(
-                            onClick = { filePickerLauncher.launch("*/*") },
+                            onClick = launchFilePicker,
                             modifier = Modifier.testTag("upload_file_button")
                         ) {
                             Icon(
@@ -279,24 +220,19 @@ fun FilesScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(
-                    onClick = {
-                        if (currentPath != "/" && currentPath.contains("/")) {
-                            val parent = currentPath.substringBeforeLast("/")
-                            currentPath = if (parent.isBlank()) "/" else parent
-                        }
-                    },
-                    enabled = currentPath != "/"
+                    onClick = { viewModel.navigateUp(serverConfig) },
+                    enabled = uiState.currentPath != "/"
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Go Up",
-                        tint = if (currentPath != "/") BurntOrange else TextSecondary.copy(alpha = 0.4f),
+                        tint = if (uiState.currentPath != "/") BurntOrange else TextSecondary.copy(alpha = 0.4f),
                         modifier = Modifier.size(20.dp)
                     )
                 }
 
                 Text(
-                    text = currentPath,
+                    text = uiState.currentPath,
                     color = TextPrimary,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 13.sp,
@@ -306,7 +242,7 @@ fun FilesScreen(
                     modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
                 )
 
-                IconButton(onClick = { refreshFiles() }) {
+                IconButton(onClick = { viewModel.loadFiles(config = serverConfig) }) {
                     Icon(
                         Icons.Default.Refresh,
                         contentDescription = "Refresh",
@@ -318,8 +254,8 @@ fun FilesScreen(
 
             // Search Bar
             OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
+                value = uiState.searchQuery,
+                onValueChange = { viewModel.updateSearchQuery(it) },
                 placeholder = { Text("Cari file atau folder...", color = TextSecondary, fontSize = 13.sp) },
                 leadingIcon = {
                     Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(18.dp))
@@ -341,7 +277,7 @@ fun FilesScreen(
             )
 
             // Upload in progress banner
-            if (isUploading) {
+            if (uiState.isUploading) {
                 TailHarnessCard(
                     backgroundColor = NavyDarkCard,
                     borderColor = BurntOrange,
@@ -363,12 +299,12 @@ fun FilesScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = "Mengunggah file ke $currentPath...",
+                                text = "Mengunggah file ke ${uiState.currentPath}...",
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp
                             )
-                            uploadingFileName?.let {
+                            uiState.uploadingFileName?.let {
                                 Text(
                                     text = it,
                                     color = BurntOrange,
@@ -392,12 +328,12 @@ fun FilesScreen(
                     .fillMaxWidth()
             ) {
                 when {
-                    isLoading -> {
+                    uiState.isLoading -> {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator(color = BurntOrange)
                         }
                     }
-                    errorMessage != null -> {
+                    uiState.errorMessage != null -> {
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -406,14 +342,14 @@ fun FilesScreen(
                             verticalArrangement = Arrangement.Center
                         ) {
                             Text(
-                                text = errorMessage ?: "Error",
+                                text = uiState.errorMessage ?: "Error",
                                 color = TerminalRed,
                                 fontSize = 14.sp,
                                 fontFamily = FontFamily.Monospace
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
-                                onClick = { refreshFiles() },
+                                onClick = { viewModel.loadFiles(config = serverConfig) },
                                 colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                             ) {
                                 Text("Coba Lagi", color = NavyDarkBackground)
@@ -449,22 +385,9 @@ fun FilesScreen(
                                     item = item,
                                     onOpen = {
                                         if (item.isDirectory) {
-                                            currentPath = item.path
+                                            viewModel.navigateTo(item.path, serverConfig)
                                         } else {
-                                            scope.launch {
-                                                isLoading = true
-                                                val contentResult = sftpManager.readFileContent(
-                                                    item.path,
-                                                    serverConfig,
-                                                    useSandbox = !serverConfig.isSshConfigured
-                                                )
-                                                isLoading = false
-                                                contentResult.onSuccess { content ->
-                                                    fileContentToView = Pair(item.name, content)
-                                                }.onFailure {
-                                                    Toast.makeText(context, "Gagal membuka file: ${it.message}", Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
+                                            viewModel.readFile(item, serverConfig)
                                         }
                                     },
                                     onRename = {
@@ -475,20 +398,8 @@ fun FilesScreen(
                                         itemToDelete = item
                                     },
                                     onDownload = {
-                                        scope.launch {
-                                            val dest = File(context.cacheDir, item.name)
-                                            val res = sftpManager.downloadToLocal(
-                                                item.path,
-                                                dest,
-                                                serverConfig,
-                                                useSandbox = !serverConfig.isSshConfigured
-                                            )
-                                            res.onSuccess {
-                                                Toast.makeText(context, "Disimpan ke: ${it.name} (${item.formattedSize})", Toast.LENGTH_LONG).show()
-                                            }.onFailure {
-                                                Toast.makeText(context, "Download gagal: ${it.message}", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
+                                        val dest = File(context.cacheDir, item.name)
+                                        viewModel.downloadFile(item, dest, serverConfig)
                                     }
                                 )
                             }
@@ -500,7 +411,7 @@ fun FilesScreen(
 
         // Floating Action Button for quick upload
         FloatingActionButton(
-            onClick = { filePickerLauncher.launch("*/*") },
+            onClick = launchFilePicker,
             containerColor = BurntOrange,
             contentColor = NavyDarkBackground,
             shape = RoundedCornerShape(16.dp),
@@ -553,17 +464,9 @@ fun FilesScreen(
                 Button(
                     onClick = {
                         if (newFolderName.isNotBlank()) {
-                            scope.launch {
-                                sftpManager.createDirectory(
-                                    currentPath,
-                                    newFolderName.trim(),
-                                    serverConfig,
-                                    useSandbox = !serverConfig.isSshConfigured
-                                )
-                                showNewFolderDialog = false
-                                newFolderName = ""
-                                refreshFiles()
-                            }
+                            viewModel.createFolder(newFolderName, serverConfig)
+                            showNewFolderDialog = false
+                            newFolderName = ""
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
@@ -619,19 +522,10 @@ fun FilesScreen(
                 Button(
                     onClick = {
                         if (newFileName.isNotBlank()) {
-                            scope.launch {
-                                sftpManager.createTextFile(
-                                    currentPath,
-                                    newFileName.trim(),
-                                    newFileContent,
-                                    serverConfig,
-                                    useSandbox = !serverConfig.isSshConfigured
-                                )
-                                showNewFileDialog = false
-                                newFileName = ""
-                                newFileContent = ""
-                                refreshFiles()
-                            }
+                            viewModel.createFile(newFileName, newFileContent, serverConfig)
+                            showNewFileDialog = false
+                            newFileName = ""
+                            newFileContent = ""
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
@@ -672,16 +566,8 @@ fun FilesScreen(
                 Button(
                     onClick = {
                         if (renameNewName.isNotBlank() && renameNewName != renameItem.name) {
-                            scope.launch {
-                                sftpManager.rename(
-                                    renameItem.path,
-                                    renameNewName.trim(),
-                                    serverConfig,
-                                    useSandbox = !serverConfig.isSshConfigured
-                                )
-                                itemToRename = null
-                                refreshFiles()
-                            }
+                            viewModel.rename(renameItem, renameNewName, serverConfig)
+                            itemToRename = null
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
@@ -711,16 +597,8 @@ fun FilesScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        scope.launch {
-                            sftpManager.delete(
-                                deleteItem.path,
-                                deleteItem.isDirectory,
-                                serverConfig,
-                                useSandbox = !serverConfig.isSshConfigured
-                            )
-                            itemToDelete = null
-                            refreshFiles()
-                        }
+                        viewModel.deleteItem(deleteItem, serverConfig)
+                        itemToDelete = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = TerminalRed)
                 ) {
@@ -736,11 +614,11 @@ fun FilesScreen(
     }
 
     // File Preview Dialog
-    val previewData = fileContentToView
+    val previewData = uiState.viewingFileContent
     if (previewData != null) {
         val (previewName, previewContent) = previewData
         AlertDialog(
-            onDismissRequest = { fileContentToView = null },
+            onDismissRequest = { viewModel.setViewingFile(null) },
             containerColor = NavyDarkCard,
             titleContentColor = TextPrimary,
             title = { Text(previewName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -775,7 +653,7 @@ fun FilesScreen(
                         Button(
                             onClick = {
                                 onAskHermesAboutFile(previewName, previewContent)
-                                fileContentToView = null
+                                viewModel.setViewingFile(null)
                             },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = BurntOrangeBadgeBg,
@@ -789,7 +667,7 @@ fun FilesScreen(
                         }
                     }
                     Button(
-                        onClick = { fileContentToView = null },
+                        onClick = { viewModel.setViewingFile(null) },
                         colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                     ) {
                         Text("Tutup", color = NavyDarkBackground, fontWeight = FontWeight.Bold, fontSize = 12.sp)
