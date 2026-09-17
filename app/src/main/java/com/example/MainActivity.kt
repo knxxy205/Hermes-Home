@@ -62,7 +62,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import androidx.fragment.app.FragmentActivity
+import androidx.appcompat.app.AppCompatActivity
 import com.example.data.hermes.ChatMessage
 import com.example.data.hermes.HermesApiClient
 import com.example.data.security.BiometricAuthHelper
@@ -97,7 +97,7 @@ enum class AppTab(val title: String, val icon: ImageVector, val tag: String) {
     SETTINGS("Settings", Icons.Default.Settings, "tab_settings")
 }
 
-class MainActivity : FragmentActivity() {
+class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -114,7 +114,7 @@ class MainActivity : FragmentActivity() {
 }
 
 @Composable
-fun TailHarnessApp(activity: FragmentActivity? = null) {
+fun TailHarnessApp(activity: AppCompatActivity? = null) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
