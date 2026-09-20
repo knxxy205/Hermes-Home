@@ -2,6 +2,7 @@ package com.example
 
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.fragment.app.FragmentActivity
@@ -333,6 +334,11 @@ fun MainContentScreen() {
         }
     }
 
+    // If user is on another tab and at root navigation, Back button returns to Terminal tab before exiting app
+    BackHandler(enabled = selectedTab != AppTab.TERMINAL) {
+        selectedTab = AppTab.TERMINAL
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = NavyDarkBackground,
@@ -379,7 +385,8 @@ fun MainContentScreen() {
                 FilesScreen(
                     sftpManager = sftpManager,
                     serverConfig = serverConfig,
-                    onAskHermesAboutFile = handleAskHermesAboutFile
+                    onAskHermesAboutFile = handleAskHermesAboutFile,
+                    isTabActive = (selectedTab == AppTab.FILES)
                 )
             }
 

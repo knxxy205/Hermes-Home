@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -193,11 +194,12 @@ fun ShortcutKeyButton(
 
     Box(
         modifier = modifier
+            .height(36.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(bg)
             .border(1.dp, borderColor, RoundedCornerShape(8.dp))
             .clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 9.dp),
+            .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -206,7 +208,7 @@ fun ShortcutKeyButton(
                 fontWeight = FontWeight.Bold,
                 color = textColor,
                 fontSize = 12.sp,
-                letterSpacing = 0.5.sp
+                letterSpacing = 0.3.sp
             )
         )
     }

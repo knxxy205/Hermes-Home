@@ -3,6 +3,7 @@ package com.example.ui.files
 import android.content.Context
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -97,10 +98,42 @@ fun FilesScreen(
     serverConfig: ServerConfig,
     viewModel: FilesViewModel = viewModel(factory = FilesViewModel.provideFactory(sftpManager)),
     onAskHermesAboutFile: ((fileName: String, content: String) -> Unit)? = null,
+    isTabActive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
+
+    // Dialog states for user input
+    var showNewFolderDialog by remember { mutableStateOf(false) }
+    var newFolderName by remember { mutableStateOf("") }
+
+    var showNewFileDialog by remember { mutableStateOf(false) }
+    var newFileName by remember { mutableStateOf("") }
+    var newFileContent by remember { mutableStateOf("") }
+
+    var itemToRename by remember { mutableStateOf<RemoteFileItem?>(null) }
+    var renameNewName by remember { mutableStateOf("") }
+
+    var itemToDelete by remember { mutableStateOf<RemoteFileItem?>(null) }
+
+    // Native Back-Button Navigation:
+    // 1. If any dialog/file preview is open, dismiss it.
+    // 2. If in a sub-directory, navigate up to parent folder.
+    // 3. When at root directory ("/") and no dialog is open, BackHandler is disabled, allowing default system back behavior (closing tab/app).
+    val canNavigateUp = viewModel.canNavigateUp()
+    val isAnyOverlayOpen = uiState.viewingFileContent != null || showNewFolderDialog || showNewFileDialog || itemToRename != null || itemToDelete != null
+
+    BackHandler(enabled = isTabActive && (canNavigateUp || isAnyOverlayOpen)) {
+        when {
+            showNewFolderDialog -> showNewFolderDialog = false
+            showNewFileDialog -> showNewFileDialog = false
+            itemToRename != null -> itemToRename = null
+            itemToDelete != null -> itemToDelete = null
+            uiState.viewingFileContent != null -> viewModel.setViewingFile(null)
+            canNavigateUp -> viewModel.navigateUp(serverConfig)
+        }
+    }
 
     // 1. Storage Access Framework (SAF) Multiple File Picker Contract initialized in root Composable
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -127,19 +160,6 @@ fun FilesScreen(
             ).show()
         }
     }
-
-    // Dialog states for user input
-    var showNewFolderDialog by remember { mutableStateOf(false) }
-    var newFolderName by remember { mutableStateOf("") }
-
-    var showNewFileDialog by remember { mutableStateOf(false) }
-    var newFileName by remember { mutableStateOf("") }
-    var newFileContent by remember { mutableStateOf("") }
-
-    var itemToRename by remember { mutableStateOf<RemoteFileItem?>(null) }
-    var renameNewName by remember { mutableStateOf("") }
-
-    var itemToDelete by remember { mutableStateOf<RemoteFileItem?>(null) }
 
     // Observe status messages for feedback
     LaunchedEffect(uiState.statusMessage) {

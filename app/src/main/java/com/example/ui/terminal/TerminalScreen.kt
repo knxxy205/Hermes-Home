@@ -357,24 +357,20 @@ fun TerminalScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(2.dp))
 
-        // Main Terminal Output Window (Termius Dark #0A0A0A canvas with pastel green monospace text)
+        // Main Terminal Output Window (Termius Dark #0A0A0A canvas - Full-width edge-to-edge)
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 2.dp)
-                .clip(RoundedCornerShape(10.dp))
                 .background(Color(0xFF0A0A0A))
-                .border(1.dp, NavyCardBorder, RoundedCornerShape(10.dp))
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(verticalScrollState)
-                    .horizontalScroll(terminalHorizontalScrollState)
-                    .padding(14.dp)
+                    .padding(4.dp)
             ) {
                 SelectionContainer {
                     Text(
@@ -383,56 +379,78 @@ fun TerminalScreen(
                         fontSize = 13.sp,
                         lineHeight = 20.sp,
                         color = Color(0xFFA8D08D),
-                        softWrap = false
+                        softWrap = true,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
-        // Quick Snippets / Custom Action Buttons Bar (Fitur 3)
+        // Quick Action Keys & Snippets (Consolidated compact 36.dp single horizontal row)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(quickCmdScrollState)
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .horizontalScroll(shortcutScrollState)
+                .padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // "+ Tambah" Action Button for Custom Snippet
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(BurntOrangePillBg)
-                    .border(1.dp, BurntOrangeBorder, RoundedCornerShape(8.dp))
-                    .clickable {
-                        newSnippetName = ""
-                        newSnippetCommand = ""
-                        showAddSnippetDialog = true
+            // Essential keyboard keys
+            ShortcutKeyButton(label = "ESC", onClick = { activeSession.sendKeyEsc() })
+            ShortcutKeyButton(label = "TAB", onClick = { activeSession.sendKeyTab() })
+            ShortcutKeyButton(
+                label = if (isCtrlActive) "CTRL [ON]" else "CTRL",
+                isActive = isCtrlActive,
+                onClick = {
+                    isCtrlActive = !isCtrlActive
+                    if (isCtrlActive) {
+                        Toast.makeText(context, "CTRL aktif: Ketik huruf apa saja (misal 'o' atau 'x')", Toast.LENGTH_SHORT).show()
                     }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Default.Add,
-                    contentDescription = "Tambah Snippet",
-                    tint = BurntOrange,
-                    modifier = Modifier.size(14.dp)
+                }
+            )
+            ShortcutKeyButton(label = "^C", onClick = { activeSession.sendKeyCtrlC() })
+            ShortcutKeyButton(
+                label = "ENTER ↵",
+                isActive = false,
+                onClick = {
+                    activeSession.sendKeyEnter()
+                    Toast.makeText(context, "↵ Enter dikirim", Toast.LENGTH_SHORT).show()
+                }
+            )
+
+            // Dedicated Nano Action Buttons
+            if (isInteractiveMode) {
+                ShortcutKeyButton(
+                    label = "^O",
+                    isActive = true,
+                    onClick = {
+                        activeSession.sendKeyCtrlO()
+                        Toast.makeText(context, "Ctrl+O dikirim (Write Out / Save)", Toast.LENGTH_SHORT).show()
+                    }
                 )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    "Tambah",
-                    color = BurntOrange,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
+                ShortcutKeyButton(
+                    label = "^X",
+                    isActive = true,
+                    onClick = {
+                        activeSession.sendKeyCtrlX()
+                        Toast.makeText(context, "Ctrl+X dikirim (Exit)", Toast.LENGTH_SHORT).show()
+                    }
                 )
             }
 
-            // Custom Snippet Chips with long-press management
+            ShortcutKeyButton(label = "↑", onClick = { activeSession.sendKeyUp() })
+            ShortcutKeyButton(label = "↓", onClick = { activeSession.sendKeyDown() })
+            ShortcutKeyButton(label = "←", onClick = { activeSession.sendKeyLeft() })
+            ShortcutKeyButton(label = "→", onClick = { activeSession.sendKeyRight() })
+            ShortcutKeyButton(label = "CLEAR", onClick = { activeSession.clearBuffer() })
+
+            // Snippet Buttons (Sys Info, df -h, etc.)
             for (snip in snippets) {
                 Row(
                     modifier = Modifier
+                        .height(36.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(if (snip.isDefault) Color(0xFF1E2636) else BurntOrangeBadgeBg.copy(alpha = 0.5f))
                         .border(
@@ -449,7 +467,7 @@ fun TerminalScreen(
                                 snippetToAction = snip
                             }
                         )
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .padding(horizontal = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (!snip.isDefault) {
@@ -465,81 +483,41 @@ fun TerminalScreen(
                         text = snip.name,
                         color = if (snip.isDefault) TextPrimary else BurntOrange,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
             }
-        }
 
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Shortcut Key Row with CTRL toggle, ^O, ^X, ENTER, Arrows, ESC, TAB, CTRL+C, etc.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(shortcutScrollState)
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            // CTRL Modifier Toggle
-            ShortcutKeyButton(
-                label = if (isCtrlActive) "CTRL [ON]" else "CTRL",
-                isActive = isCtrlActive,
-                onClick = {
-                    isCtrlActive = !isCtrlActive
-                    if (isCtrlActive) {
-                        Toast.makeText(context, "CTRL aktif: Ketik huruf apa saja (misal 'o' atau 'x')", Toast.LENGTH_SHORT).show()
+            // "+ Tambah" Action Button for Custom Snippet
+            Row(
+                modifier = Modifier
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(BurntOrangePillBg)
+                    .border(1.dp, BurntOrangeBorder, RoundedCornerShape(8.dp))
+                    .clickable {
+                        newSnippetName = ""
+                        newSnippetCommand = ""
+                        showAddSnippetDialog = true
                     }
-                }
-            )
-
-            // Dedicated Nano Action Buttons
-            ShortcutKeyButton(
-                label = "^O",
-                isActive = isInteractiveMode,
-                onClick = {
-                    activeSession.sendKeyCtrlO()
-                    Toast.makeText(context, "Ctrl+O dikirim (Write Out / Save)", Toast.LENGTH_SHORT).show()
-                }
-            )
-            ShortcutKeyButton(
-                label = "^X",
-                isActive = isInteractiveMode,
-                onClick = {
-                    activeSession.sendKeyCtrlX()
-                    Toast.makeText(context, "Ctrl+X dikirim (Exit)", Toast.LENGTH_SHORT).show()
-                }
-            )
-            ShortcutKeyButton(
-                label = "ENTER ↵",
-                isActive = false,
-                onClick = {
-                    activeSession.sendKeyEnter()
-                    Toast.makeText(context, "↵ Enter dikirim", Toast.LENGTH_SHORT).show()
-                }
-            )
-
-            ShortcutKeyButton(label = "ESC", onClick = { activeSession.sendKeyEsc() })
-            ShortcutKeyButton(label = "TAB", onClick = { activeSession.sendKeyTab() })
-            ShortcutKeyButton(label = "^C", onClick = { activeSession.sendKeyCtrlC() })
-            ShortcutKeyButton(label = "↑", onClick = { activeSession.sendKeyUp() })
-            ShortcutKeyButton(label = "↓", onClick = { activeSession.sendKeyDown() })
-            ShortcutKeyButton(label = "←", onClick = { activeSession.sendKeyLeft() })
-            ShortcutKeyButton(label = "→", onClick = { activeSession.sendKeyRight() })
-            ShortcutKeyButton(label = "CLEAR", onClick = { activeSession.clearBuffer() })
-            ShortcutKeyButton(
-                label = if (isWordWrapEnabled) "WRAP" else "NOWRAP",
-                isActive = isWordWrapEnabled,
-                onClick = {
-                    isWordWrapEnabled = !isWordWrapEnabled
-                    Toast.makeText(
-                        context,
-                        if (isWordWrapEnabled) "Word Wrap: Aktif" else "Horizontal Scroll: Aktif",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            )
+                    .padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "Tambah Snippet",
+                    tint = BurntOrange,
+                    modifier = Modifier.size(13.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    "Tambah",
+                    color = BurntOrange,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(6.dp))

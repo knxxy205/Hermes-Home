@@ -55,12 +55,19 @@ class FilesViewModel(
         loadFiles(path, config)
     }
 
+    fun canNavigateUp(): Boolean {
+        val current = _uiState.value.currentPath.trim()
+        return current != "/" && current.isNotBlank()
+    }
+
     fun navigateUp(config: ServerConfig) {
-        val current = _uiState.value.currentPath
-        if (current != "/" && current.contains("/")) {
+        val current = _uiState.value.currentPath.trimEnd('/')
+        if (current.isNotBlank() && current != "/") {
             val parent = current.substringBeforeLast("/")
             val newPath = if (parent.isBlank()) "/" else parent
             navigateTo(newPath, config)
+        } else {
+            navigateTo("/", config)
         }
     }
 
