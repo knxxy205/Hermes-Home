@@ -100,80 +100,102 @@ class FilesViewModel(
         uri: Uri,
         config: ServerConfig
     ) {
-        val fileName = resolveFileName(context, uri)
+        uploadMultipleFiles(context, listOf(uri), config)
+    }
+
+    fun uploadMultipleFiles(
+        context: Context,
+        uris: List<Uri>,
+        config: ServerConfig
+    ) {
+        if (uris.isEmpty()) return
         val currentPath = _uiState.value.currentPath
+        val totalCount = uris.size
 
         _uiState.update {
             it.copy(
                 isUploading = true,
-                uploadingFileName = fileName,
-                statusMessage = "Mengunggah: $fileName..."
+                uploadingFileName = "1/$totalCount",
+                statusMessage = if (totalCount == 1) {
+                    val singleName = resolveFileName(context, uris[0])
+                    "Mengunggah: $singleName..."
+                } else {
+                    "Mempersiapkan unggahan $totalCount berkas..."
+                }
             )
         }
 
         viewModelScope.launch(Dispatchers.IO) {
-            var inputStream: InputStream? = null
-            try {
-                inputStream = try {
-                    context.contentResolver.openInputStream(uri)
-                } catch (e: Exception) {
-                    null
-                }
+            var successCount = 0
+            var failCount = 0
 
-                if (inputStream == null) {
-                    withContext(Dispatchers.Main) {
-                        _uiState.update {
-                            it.copy(
-                                isUploading = false,
-                                uploadingFileName = null,
-                                statusMessage = "Gagal membaca file dari penyimpanan lokal."
-                            )
-                        }
-                    }
-                    return@launch
-                }
-
-                val result = sftpManager.uploadFile(
-                    parentPath = currentPath,
-                    fileName = fileName,
-                    inputStream = inputStream,
-                    config = config,
-                    useSandbox = !config.isSshConfigured
-                )
+            for ((index, uri) in uris.withIndex()) {
+                val currentNum = index + 1
+                val fileName = resolveFileName(context, uri)
 
                 withContext(Dispatchers.Main) {
                     _uiState.update {
                         it.copy(
-                            isUploading = false,
-                            uploadingFileName = null
-                        )
-                    }
-                    if (result.isSuccess) {
-                        _uiState.update {
-                            it.copy(statusMessage = "File berhasil diunggah: $fileName")
-                        }
-                        loadFiles(currentPath, config)
-                    } else {
-                        val err = result.exceptionOrNull()
-                        _uiState.update {
-                            it.copy(statusMessage = "Upload gagal: ${err?.localizedMessage ?: err?.message ?: "Unknown error"}")
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    _uiState.update {
-                        it.copy(
-                            isUploading = false,
-                            uploadingFileName = null,
-                            statusMessage = "Error saat mengunggah: ${e.localizedMessage ?: e.message}"
+                            uploadingFileName = if (totalCount > 1) "$fileName ($currentNum/$totalCount)" else fileName,
+                            statusMessage = if (totalCount > 1) {
+                                "Mengunggah ($currentNum/$totalCount): $fileName..."
+                            } else {
+                                "Mengunggah: $fileName..."
+                            }
                         )
                     }
                 }
-            } finally {
+
+                var inputStream: InputStream? = null
                 try {
-                    inputStream?.close()
-                } catch (_: Exception) {}
+                    inputStream = try {
+                        context.contentResolver.openInputStream(uri)
+                    } catch (e: Exception) {
+                        null
+                    }
+
+                    if (inputStream == null) {
+                        failCount++
+                        continue
+                    }
+
+                    val result = sftpManager.uploadFile(
+                        parentPath = currentPath,
+                        fileName = fileName,
+                        inputStream = inputStream,
+                        config = config,
+                        useSandbox = !config.isSshConfigured
+                    )
+
+                    if (result.isSuccess) {
+                        successCount++
+                    } else {
+                        failCount++
+                    }
+                } catch (e: Exception) {
+                    failCount++
+                } finally {
+                    try {
+                        inputStream?.close()
+                    } catch (_: Exception) {}
+                }
+            }
+
+            withContext(Dispatchers.Main) {
+                _uiState.update {
+                    it.copy(
+                        isUploading = false,
+                        uploadingFileName = null,
+                        statusMessage = when {
+                            totalCount == 1 && successCount == 1 -> "File berhasil diunggah."
+                            totalCount == 1 && failCount == 1 -> "Gagal mengunggah file."
+                            failCount == 0 -> "Berhasil mengunggah $successCount berkas."
+                            successCount == 0 -> "Gagal mengunggah seluruh berkas ($failCount berkas)."
+                            else -> "Unggahan selesai: $successCount berhasil, $failCount gagal."
+                        }
+                    )
+                }
+                loadFiles(currentPath, config)
             }
         }
     }

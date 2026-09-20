@@ -102,20 +102,20 @@ fun FilesScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
 
-    // 1. Storage Access Framework (SAF) File Picker Contract initialized in root Composable
+    // 1. Storage Access Framework (SAF) Multiple File Picker Contract initialized in root Composable
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            viewModel.uploadFile(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            viewModel.uploadMultipleFiles(
                 context = context.applicationContext,
-                uri = uri,
+                uris = uris,
                 config = serverConfig
             )
         }
     }
 
-    // Safe launch helper for file picker using SAF OpenDocument
+    // Safe launch helper for file picker using SAF OpenMultipleDocuments
     val launchFilePicker = {
         try {
             filePickerLauncher.launch(arrayOf("*/*"))
