@@ -1,6 +1,5 @@
 package com.example.data.ssh
 
-import androidx.compose.ui.text.AnnotatedString
 import com.example.data.model.ServerConfig
 import com.jcraft.jsch.ChannelShell
 import com.jcraft.jsch.JSch
@@ -17,7 +16,6 @@ import kotlinx.coroutines.withContext
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
-import java.io.InputStreamReader
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 
@@ -33,70 +31,73 @@ class SshTerminalSession(
         _title.value = newTitle
     }
 
-    private var session: Session? = null
-    private var channel: ChannelShell? = null
-    private var outputStream: OutputStream? = null
+    @Volatile private var session: Session? = null
+    @Volatile private var channel: ChannelShell? = null
+    @Volatile private var outputStream: OutputStream? = null
     private var readJob: Job? = null
 
     private val _connectionState = MutableStateFlow<TerminalConnectionState>(TerminalConnectionState.Disconnected)
     val connectionState: StateFlow<TerminalConnectionState> = _connectionState.asStateFlow()
 
-    private val terminalBuffer = TerminalScreenBuffer(maxCols = 80, maxRows = 24)
-    private var columns = 80
-    private var rows = 24
-    private val pendingInput = Channel<ByteArray>(Channel.UNLIMITED)
+    val engine = TerminalEngine(::sendRawBytes)
+    private val _revision = MutableStateFlow(0L)
+    val revision = _revision.asStateFlow()
+    private var resizeJob: Job? = null
+    private var connectJob: Job? = null
+    private val generation = java.util.concurrent.atomic.AtomicLong()
+    @Volatile private var columns = 80
+    @Volatile private var rows = 24
+    private data class Input(val generation: Long, val bytes: ByteArray)
+    private val pendingInput = Channel<Input>(Channel.UNLIMITED)
     private val inputJob = coroutineScope.launch(Dispatchers.IO) {
-        for (bytes in pendingInput) {
+        for (input in pendingInput) {
+            if (input.generation != generation.get()) continue
             try {
-                outputStream?.let { out -> out.write(bytes); out.flush() }
-            } catch (_: Exception) { }
+                outputStream?.let { out -> out.write(input.bytes); out.flush() }
+            } catch (e: Exception) {
+                if (input.generation == generation.get()) {
+                    _connectionState.value = TerminalConnectionState.Error("Gagal mengirim input: ${e.message}")
+                    disconnectInternal()
+                }
+            }
         }
     }
-    private val pendingOutput = Channel<String>(64)
+    private val pendingOutput = Channel<ByteArray>(64)
     private val outputJob by lazy { coroutineScope.launch(Dispatchers.Default) {
         for (first in pendingOutput) {
             delay(16)
-            val batch = StringBuilder(first)
-            while (true) batch.append(pendingOutput.tryReceive().getOrNull() ?: break)
-            val text = batch.toString()
-            terminalBuffer.process(text)
-            _terminalOutput.value = (_terminalOutput.value + text).takeLast(30000)
-            _isInteractiveMode.value = terminalBuffer.isInteractive()
-            _terminalAnnotatedOutput.value = terminalBuffer.render()
+            engine.append(first)
+            // Bound each batch so a continuous producer cannot starve drawing or resizing.
+            repeat(63) { pendingOutput.tryReceive().getOrNull()?.let(engine::append) }
+            _isInteractiveMode.value = synchronized(engine.lock) { engine.emulator.isAlternateBufferActive }
+            _revision.value++
         }
     } }
 
     fun resize(columns: Int, rows: Int) {
         val cols = columns.coerceIn(20, 240)
         val lines = rows.coerceIn(4, 120)
+        resizeJob?.cancel()
         if (cols == this.columns && lines == this.rows) return
-        this.columns = cols
-        this.rows = lines
-        terminalBuffer.resize(cols, lines)
-        channel?.setPtySize(cols, lines, 0, 0)
-        _terminalAnnotatedOutput.value = terminalBuffer.render()
+        resizeJob = coroutineScope.launch(Dispatchers.IO) {
+            delay(180)
+            this@SshTerminalSession.columns = cols
+            this@SshTerminalSession.rows = lines
+            engine.resize(cols, lines)
+            _revision.value++
+            try { channel?.setPtySize(cols, lines, 0, 0) } catch (_: Exception) { }
+        }
     }
 
     private val _isInteractiveMode = MutableStateFlow(false)
     val isInteractiveMode: StateFlow<Boolean> = _isInteractiveMode.asStateFlow()
 
-    private val initialWelcome = "TailHarness v1.0.0 [Session: ${_title.value}]\n" +
-            "Ready. Configure credentials in Settings or tap Connect.\n\n"
-
-    private val _terminalOutput = MutableStateFlow(initialWelcome)
-    val terminalOutput: StateFlow<String> = _terminalOutput.asStateFlow()
-
-    private val _terminalAnnotatedOutput = MutableStateFlow(AnnotatedString(initialWelcome))
-    val terminalAnnotatedOutput: StateFlow<AnnotatedString> = _terminalAnnotatedOutput.asStateFlow()
-
     private var isSandboxMode = false
     private var isSandboxNano = false
+    private val sandboxInput = StringBuilder()
 
     init {
         outputJob.start()
-        terminalBuffer.onInteractiveModeChanged = { interactive ->
-            _isInteractiveMode.value = interactive
-        }
     }
 
     fun connect(config: ServerConfig) {
@@ -117,14 +118,16 @@ class SshTerminalSession(
         _connectionState.value = TerminalConnectionState.Connecting
         appendOutput("\u001B[33mConnecting to ${config.sshUser}@${config.sshHost}:${config.sshPort} via Tailscale...\u001B[0m\n")
 
-        coroutineScope.launch(Dispatchers.IO) {
+        disconnectInternal()
+        val token = generation.get()
+        connectJob = coroutineScope.launch(Dispatchers.IO) {
+            var newSession: Session? = null
             try {
-                disconnectInternal()
                 isSandboxMode = false
 
                 val jsch = JSch()
                 val trust = com.example.data.security.SshTrust.configure(jsch)
-                val newSession = jsch.getSession(config.sshUser, config.sshHost, config.sshPort)
+                newSession = jsch.getSession(config.sshUser, config.sshHost, config.sshPort)
                 newSession.setPassword(config.sshPassword)
                 newSession.userInfo = trust
                 newSession.setConfig("StrictHostKeyChecking", "ask")
@@ -137,19 +140,48 @@ class SshTerminalSession(
 
                 val newChannel = newSession.openChannel("shell") as ChannelShell
                 newChannel.setPtyType("xterm-256color", columns, rows, 0, 0)
+                // JSch's channel streams must be created before connect so its packet reader
+                // is attached before the shell request starts sending the greeting.
+                val newInput: InputStream = newChannel.inputStream
+                val newOutput: OutputStream = newChannel.outputStream
                 newChannel.connect(10000)
-
-                session = newSession
-                channel = newChannel
-                outputStream = newChannel.outputStream
-
-                withContext(Dispatchers.Main) {
-                    _connectionState.value = TerminalConnectionState.Connected(config.sshHost, config.sshUser)
-                    appendOutput("\u001B[32m[CONNECTED] SSH session established on ${config.sshHost}\u001B[0m\n\n")
+                synchronized(this@SshTerminalSession) {
+                    if (generation.get() != token) {
+                        newSession.disconnect()
+                        return@launch
+                    }
+                    session = newSession
+                    channel = newChannel
+                    outputStream = newOutput
                 }
 
-                startReading(newChannel.inputStream)
+                withContext(Dispatchers.Main) {
+                    if (generation.get() == token) _connectionState.value = TerminalConnectionState.Connected(config.sshHost, config.sshUser)
+                }
+
+                val outputReader = coroutineScope.launch(Dispatchers.IO) {
+                    val bytes = ByteArray(8192)
+                    try {
+                        while (isActive && generation.get() == token) {
+                            val count = newInput.read(bytes)
+                            if (count < 0) break
+                            pendingOutput.send(bytes.copyOf(count))
+                        }
+                    } catch (_: Exception) { }
+                }
+                readJob = coroutineScope.launch(Dispatchers.IO) {
+                    outputReader.join()
+                    synchronized(this@SshTerminalSession) {
+                        if (generation.get() == token) {
+                            _connectionState.value = TerminalConnectionState.Disconnected
+                            appendOutput("\n[DISCONNECTED] Server menutup sesi (exit ${newChannel.exitStatus}).\n")
+                            disconnectInternal()
+                        }
+                    }
+                }
             } catch (e: Exception) {
+                newSession?.disconnect()
+                if (generation.get() != token || e is kotlinx.coroutines.CancellationException) return@launch
                 withContext(Dispatchers.Main) {
                     val errMsg = e.localizedMessage ?: "Unknown SSH connection error"
                     _connectionState.value = TerminalConnectionState.Error(errMsg)
@@ -161,40 +193,13 @@ class SshTerminalSession(
         }
     }
 
-    private fun startReading(inputStream: InputStream) {
-        readJob?.cancel()
-        readJob = coroutineScope.launch(Dispatchers.IO) {
-            val reader = InputStreamReader(inputStream, Charsets.UTF_8)
-            val buffer = CharArray(4096)
-            try {
-                while (isActive) {
-                    val read = reader.read(buffer)
-                    if (read == -1) break
-                    if (read > 0) {
-                        pendingOutput.send(String(buffer, 0, read))
-                    }
-                }
-            } catch (e: Exception) {
-                // stream closed or disconnected
-            } finally {
-                withContext(Dispatchers.Main) {
-                    if (_connectionState.value is TerminalConnectionState.Connected) {
-                        _connectionState.value = TerminalConnectionState.Disconnected
-                        appendOutput("\n\u001B[33m[DISCONNECTED] Sesi SSH ditutup.\u001B[0m\n")
-                    }
-                }
-                disconnectInternal()
-            }
-        }
-    }
-
     fun startSandboxMode() {
         disconnectInternal()
         isSandboxMode = true
         isSandboxNano = false
         _connectionState.value = TerminalConnectionState.Connected("homeserver.tailscale", "admin")
-        _terminalOutput.value = ""
-        terminalBuffer.clear()
+        sandboxInput.clear()
+        engine.clear()
         _isInteractiveMode.value = false
         appendOutput("\u001B[36m┌──────────────────────────────────────────────────────────┐\u001B[0m\n")
         appendOutput("\u001B[36m│       TailHarness Tailscale SSH Sandbox [Active]         │\u001B[0m\n")
@@ -217,7 +222,7 @@ class SshTerminalSession(
 
         val out = outputStream
         if (out != null && channel?.isConnected == true) {
-            pendingInput.trySend((command + "\r").toByteArray(Charsets.UTF_8))
+            pendingInput.trySend(Input(generation.get(), (command + "\r").toByteArray(Charsets.UTF_8)))
         } else {
             appendOutput("\n\u001B[31m[ERROR] Not connected. Connect SSH first.\u001B[0m\n")
         }
@@ -237,22 +242,43 @@ class SshTerminalSession(
                 } else if (bytes.contentEquals(byteArrayOf(0x0D))) {
                     // Enter in simulated nano
                     appendOutput("\n")
+                } else if (bytes.contentEquals(byteArrayOf(0x7f))) {
+                    if (sandboxInput.isNotEmpty()) {
+                        sandboxInput.deleteCharAt(sandboxInput.lastIndex)
+                        appendOutput("\b \b")
+                    }
+                } else if (bytes.none { it == 0x1b.toByte() }) {
+                    val text = bytes.toString(Charsets.UTF_8)
+                    sandboxInput.append(text)
+                    appendOutput(text)
                 }
                 return
             }
 
             // Handle basic shortcuts in sandbox
             if (bytes.contentEquals(byteArrayOf(0x03))) {
+                sandboxInput.clear()
                 appendOutput("^C\n\u001B[32madmin@homeserver:~$\u001B[0m ")
             } else if (bytes.contentEquals(byteArrayOf(0x0D))) {
-                appendOutput("\n\u001B[32madmin@homeserver:~$\u001B[0m ")
+                val cmd = sandboxInput.toString()
+                sandboxInput.clear()
+                handleSandboxCommand(cmd, echo = false)
+            } else if (bytes.contentEquals(byteArrayOf(0x7f))) {
+                if (sandboxInput.isNotEmpty()) {
+                    sandboxInput.deleteCharAt(sandboxInput.lastIndex)
+                    appendOutput("\b \b")
+                }
+            } else if (bytes.none { it == 0x1b.toByte() }) {
+                val text = bytes.toString(Charsets.UTF_8)
+                sandboxInput.append(text)
+                appendOutput(text)
             }
             return
         }
 
         val out = outputStream
         if (out != null && channel?.isConnected == true) {
-            pendingInput.trySend(bytes)
+            pendingInput.trySend(Input(generation.get(), bytes))
         }
     }
 
@@ -277,17 +303,16 @@ class SshTerminalSession(
     }
 
     fun clearBuffer() {
-        _terminalOutput.value = ""
-        terminalBuffer.clear()
+        engine.clear()
+        _revision.value++
         _isInteractiveMode.value = false
-        _terminalAnnotatedOutput.value = AnnotatedString("")
     }
 
     private fun appendOutput(newText: String) {
-        pendingOutput.trySend(newText)
+        pendingOutput.trySend(newText.replace("\n", "\r\n").toByteArray(Charsets.UTF_8))
     }
 
-    private fun handleSandboxCommand(cmd: String) {
+    private fun handleSandboxCommand(cmd: String, echo: Boolean = true) {
         val trimmed = cmd.trim()
 
         if (isSandboxNano) {
@@ -295,7 +320,7 @@ class SshTerminalSession(
             return
         }
 
-        appendOutput("$cmd\n")
+        appendOutput(if (echo) "$cmd\n" else "\n")
 
         if (trimmed.startsWith("nano")) {
             isSandboxNano = true
@@ -369,11 +394,14 @@ class SshTerminalSession(
         appendOutput("\n\u001B[33m[DISCONNECTED] Sesi SSH dihentikan oleh pengguna.\u001B[0m\n")
     }
 
-    private fun disconnectInternal() {
+    @Synchronized private fun disconnectInternal() {
+        generation.incrementAndGet()
+        connectJob?.cancel()
+        connectJob = null
         readJob?.cancel()
         readJob = null
         try {
-            outputStream?.close()
+            // Keep the JSch-owned stream alive until the channel is closed.
         } catch (_: Exception) {}
         outputStream = null
 
@@ -381,6 +409,7 @@ class SshTerminalSession(
             channel?.disconnect()
         } catch (_: Exception) {}
         channel = null
+        outputStream = null
 
         try {
             session?.disconnect()
@@ -389,6 +418,7 @@ class SshTerminalSession(
     }
 
     fun destroy() {
+        resizeJob?.cancel()
         disconnectInternal()
         pendingOutput.close()
         outputJob.cancel()

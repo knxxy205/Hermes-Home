@@ -357,8 +357,8 @@ services:
         try {
             val sftp = getConnectedSftp(config)
             val outputStream = ByteArrayOutputStream()
-            sftp.get(remotePath, outputStream)
-            val content = outputStream.toString("UTF-8")
+            sftp.get(remotePath).use { FilePreview.copyBounded(it, outputStream, FilePreview.MAX_TEXT_BYTES) }
+            val content = FilePreview.decodeText(outputStream.toByteArray())
             Result.success(content)
         } catch (e: Exception) {
             Result.failure(e)
@@ -369,21 +369,30 @@ services:
         remotePath: String,
         targetFile: File,
         config: ServerConfig,
-        useSandbox: Boolean = false
+        useSandbox: Boolean = false,
+        maxBytes: Long = Long.MAX_VALUE
     ): Result<File> = withContext(Dispatchers.IO) {
         if (useSandbox || !config.isSshConfigured) {
             val content = sandboxFileContents[remotePath] ?: "Sample file content downloaded from homeserver sandbox"
-            targetFile.writeText(content)
-            return@withContext Result.success(targetFile)
+            return@withContext try {
+                val bytes = content.toByteArray(Charsets.UTF_8)
+                require(bytes.size.toLong() <= maxBytes) { "File terlalu besar untuk preview." }
+                targetFile.writeBytes(bytes)
+                Result.success(targetFile)
+            } catch (e: Exception) {
+                targetFile.delete()
+                Result.failure(e)
+            }
         }
 
         try {
             val sftp = getConnectedSftp(config)
             FileOutputStream(targetFile).use { fos ->
-                sftp.get(remotePath, fos)
+                sftp.get(remotePath).use { FilePreview.copyBounded(it, fos, maxBytes) }
             }
             Result.success(targetFile)
         } catch (e: Exception) {
+            targetFile.delete()
             Result.failure(e)
         }
     }

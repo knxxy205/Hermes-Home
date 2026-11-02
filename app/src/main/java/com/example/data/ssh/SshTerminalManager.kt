@@ -1,6 +1,5 @@
 package com.example.data.ssh
 
-import androidx.compose.ui.text.AnnotatedString
 import com.example.data.model.ServerConfig
 import com.jcraft.jsch.ChannelExec
 import com.jcraft.jsch.JSch
@@ -43,14 +42,6 @@ class SshTerminalManager(
     val connectionState: StateFlow<TerminalConnectionState> = _activeSession
         .flatMapLatest { it.connectionState }
         .stateIn(coroutineScope, SharingStarted.Eagerly, TerminalConnectionState.Disconnected)
-
-    val terminalOutput: StateFlow<String> = _activeSession
-        .flatMapLatest { it.terminalOutput }
-        .stateIn(coroutineScope, SharingStarted.Eagerly, "")
-
-    val terminalAnnotatedOutput: StateFlow<AnnotatedString> = _activeSession
-        .flatMapLatest { it.terminalAnnotatedOutput }
-        .stateIn(coroutineScope, SharingStarted.Eagerly, AnnotatedString(""))
 
     val isInteractiveMode: StateFlow<Boolean> = _activeSession
         .flatMapLatest { it.isInteractiveMode }

@@ -18,6 +18,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
+import com.example.data.sftp.FilePreview
+import android.graphics.Bitmap
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.CancellationException
+
+data class ImagePreview(val name: String, val bitmap: Bitmap? = null, val error: String? = null)
 
 data class FilesUiState(
     val currentPath: String = "/",
@@ -28,7 +35,8 @@ data class FilesUiState(
     val errorMessage: String? = null,
     val statusMessage: String? = null,
     val searchQuery: String = "",
-    val viewingFileContent: Pair<String, String>? = null
+    val viewingFileContent: Pair<String, String>? = null,
+    val imagePreview: ImagePreview? = null
 )
 
 class FilesViewModel(
@@ -37,6 +45,16 @@ class FilesViewModel(
 
     private val _uiState = MutableStateFlow(FilesUiState())
     val uiState: StateFlow<FilesUiState> = _uiState.asStateFlow()
+    private var previewJob: Job? = null
+    private var previewGeneration = 0
+
+    fun closeImagePreview() {
+        previewGeneration++
+        previewJob?.cancel()
+        val oldBitmap = _uiState.value.imagePreview?.bitmap
+        _uiState.update { it.copy(imagePreview = null) }
+        if (oldBitmap != null && !oldBitmap.isRecycled) oldBitmap.recycle()
+    }
 
     fun updateSearchQuery(query: String) {
         _uiState.update { it.copy(searchQuery = query) }
@@ -295,7 +313,35 @@ class FilesViewModel(
         }
     }
 
-    fun readFile(item: RemoteFileItem, config: ServerConfig) {
+    fun readFile(item: RemoteFileItem, config: ServerConfig, cacheDir: File) {
+        closeImagePreview()
+        if (FilePreview.isImage(item.name)) {
+            val generation = previewGeneration
+            _uiState.update { it.copy(viewingFileContent = null, imagePreview = ImagePreview(item.name)) }
+            previewJob = viewModelScope.launch {
+                try {
+                    val bitmap = withContext(Dispatchers.IO) {
+                        require(item.sizeBytes <= FilePreview.MAX_IMAGE_BYTES) { "Gambar melebihi batas preview 25 MB. Gunakan Download." }
+                        val dir = File(cacheDir, "image-previews").apply { mkdirs() }
+                        // Temporary downloads are removed after decoding, also on failure/cancellation.
+                        val file = File.createTempFile("preview-", ".image", dir)
+                        try {
+                            sftpManager.downloadToLocal(item.path, file, config, !config.isSshConfigured,
+                                FilePreview.MAX_IMAGE_BYTES).getOrThrow()
+                            ensureActive()
+                            FilePreview.decodeImage(file)
+                        } finally { file.delete() }
+                    }
+                    if (generation == previewGeneration) _uiState.update { it.copy(imagePreview = ImagePreview(item.name, bitmap)) }
+                    else if (!bitmap.isRecycled) bitmap.recycle()
+            } catch (e: CancellationException) {
+                throw e
+                } catch (e: Exception) {
+                    if (generation == previewGeneration) _uiState.update { it.copy(imagePreview = ImagePreview(item.name, error = e.message ?: "Gagal membuka gambar")) }
+                }
+            }
+            return
+        }
         _uiState.update { it.copy(isLoading = true) }
         viewModelScope.launch(Dispatchers.IO) {
             val result = sftpManager.readFileContent(

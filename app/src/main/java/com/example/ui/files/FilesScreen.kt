@@ -1,4 +1,5 @@
 package com.example.ui.files
+import androidx.compose.ui.graphics.asImageBitmap
 
 import android.content.Context
 import android.net.Uri
@@ -130,7 +131,7 @@ fun FilesScreen(
     // 2. If in a sub-directory, navigate up to parent folder.
     // 3. When at root directory ("/") and no dialog is open, BackHandler is disabled, allowing default system back behavior (closing tab/app).
     val canNavigateUp = viewModel.canNavigateUp()
-    val isAnyOverlayOpen = uiState.viewingFileContent != null || showNewFolderDialog || showNewFileDialog || itemToRename != null || itemToDelete != null
+    val isAnyOverlayOpen = uiState.imagePreview != null || uiState.viewingFileContent != null || showNewFolderDialog || showNewFileDialog || itemToRename != null || itemToDelete != null
 
     BackHandler(enabled = isTabActive && (canNavigateUp || isAnyOverlayOpen)) {
         when {
@@ -138,6 +139,7 @@ fun FilesScreen(
             showNewFileDialog -> showNewFileDialog = false
             itemToRename != null -> itemToRename = null
             itemToDelete != null -> itemToDelete = null
+            uiState.imagePreview != null -> viewModel.closeImagePreview()
             uiState.viewingFileContent != null -> viewModel.setViewingFile(null)
             canNavigateUp -> viewModel.navigateUp(serverConfig)
         }
@@ -444,7 +446,7 @@ fun FilesScreen(
                                         if (item.isDirectory) {
                                             viewModel.navigateTo(item.path, serverConfig)
                                         } else {
-                                            viewModel.readFile(item, serverConfig)
+                                            viewModel.readFile(item, serverConfig, context.cacheDir)
                                         }
                                     },
                                     onRename = {
@@ -668,6 +670,31 @@ fun FilesScreen(
                 }
             }
         )
+    }
+
+    uiState.imagePreview?.let { preview ->
+        androidx.compose.ui.window.Dialog(onDismissRequest = { viewModel.closeImagePreview() },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+            Column(Modifier.fillMaxSize().background(Color(0xff141729)).padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(preview.name, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { viewModel.closeImagePreview() }) { Text("Tutup", color = Color.White) }
+                }
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    when {
+                        preview.bitmap != null -> androidx.compose.foundation.Image(
+                            bitmap = preview.bitmap.asImageBitmap(), contentDescription = preview.name,
+                            modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Fit)
+                        preview.error != null -> Text(preview.error, color = Color.White)
+                        else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(color = Color(0xff62ae91))
+                            Spacer(Modifier.height(12.dp))
+                            Text("Mengunduh gambar…", color = Color.White)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // File Preview Dialog

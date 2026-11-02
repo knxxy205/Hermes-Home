@@ -334,11 +334,23 @@ fun MainContentScreen() {
         onDispose { terminalManager.sessions.value.forEach { it.destroy() } }
     }
     val sftpManager = remember { SftpManager() }
+    DisposableEffect(sftpManager) { onDispose { sftpManager.close() } }
     val hermesClient = remember { HermesApiClient() }
     val hermesMessages = remember { mutableStateListOf<ChatMessage>() }
 
     var selectedTab by remember { mutableStateOf(AppTab.TERMINAL) }
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val density = LocalDensity.current
+    val imeInsets = WindowInsets.ime
+    val keyboardVisible by remember(density, imeInsets) { androidx.compose.runtime.derivedStateOf { imeInsets.getBottom(density) > 0 } }
+    val terminalActive = selectedTab == AppTab.TERMINAL
+    val activity = context as? androidx.activity.ComponentActivity
+    DisposableEffect(terminalActive) {
+        activity?.enableEdgeToEdge(
+            statusBarStyle = if (terminalActive) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT) else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = if (terminalActive) SystemBarStyle.dark(0xff141729.toInt()) else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+        )
+        onDispose { }
+    }
 
     // Cross-Integration Handler: Execute CLI command from Hermes directly in Terminal
     val handleExecuteInTerminal: (String) -> Unit = { command ->
@@ -387,12 +399,13 @@ fun MainContentScreen() {
 
     Scaffold(
         modifier = Modifier.fillMaxSize().imePadding(),
-        containerColor = NavyDarkBackground,
+        containerColor = if (terminalActive) Color(0xff141729) else NavyDarkBackground,
         contentWindowInsets = WindowInsets.statusBars,
         bottomBar = {
             if (!keyboardVisible) TailHarnessBottomNav(
                 selectedTab = selectedTab,
-                onTabSelected = { selectedTab = it }
+                onTabSelected = { selectedTab = it },
+                dark = terminalActive
             )
         }
     ) { innerPadding ->
@@ -482,22 +495,23 @@ private fun Modifier.activeScreen(active: Boolean): Modifier = this.then(
 fun TailHarnessBottomNav(
     selectedTab: AppTab,
     onTabSelected: (AppTab) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    dark: Boolean = false
 ) {
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = if (dark) 0.dp else 16.dp, vertical = if (dark) 0.dp else 8.dp)
             .navigationBarsPadding(),
-        shape = RoundedCornerShape(26.dp),
-        color = Color.White,
-        shadowElevation = 6.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, NavyDarkBorder)
+        shape = RoundedCornerShape(if (dark) 0.dp else 26.dp),
+        color = if (dark) Color(0xff141729) else Color.White,
+        shadowElevation = if (dark) 0.dp else 6.dp,
+        border = if (dark) null else androidx.compose.foundation.BorderStroke(1.dp, NavyDarkBorder)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = 8.dp),
+                .padding(horizontal = 6.dp, vertical = if (dark) 0.dp else 8.dp),
             horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -507,9 +521,9 @@ fun TailHarnessBottomNav(
                     Column(
                         modifier = Modifier
                             .weight(1f)
-                            .heightIn(min = 56.dp)
+                            .heightIn(min = if (dark) 48.dp else 56.dp)
                             .clip(RoundedCornerShape(18.dp))
-                            .background(if (isSelected) BurntOrange else Color.Transparent)
+                            .background(if (isSelected && !dark) BurntOrange else Color.Transparent)
                             .clickable { onTabSelected(tab) }
                             .padding(vertical = 8.dp)
                             .testTag(tab.tag),
@@ -519,13 +533,13 @@ fun TailHarnessBottomNav(
                         Icon(
                             imageVector = tab.icon,
                             contentDescription = tab.title,
-                            tint = if (isSelected) Color.White else TextSecondary,
+                            tint = if (dark && isSelected) Color(0xff62ae91) else if (isSelected) Color.White else TextSecondary,
                             modifier = Modifier.size(22.dp)
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = tab.title,
-                            color = if (isSelected) Color.White else TextSecondary,
+                            color = if (dark && isSelected) Color(0xff62ae91) else if (isSelected) Color.White else TextSecondary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium
                         )

@@ -206,6 +206,7 @@ jobs:
           - **Source Commit SHA**: ${GITHUB_SHA}
           - **Type**: Debug APK intended for testing and development
           - **Signature**: Signed with the persistent Homeserver Remote testing key
+          - **Source code**: https://github.com/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.zip (commit ${GITHUB_SHA})
           - **Notice**: This is not a Play Store production release.
           EOF
           )
