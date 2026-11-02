@@ -407,16 +407,15 @@ class SettingsViewModel(
     fun applyPresetTailscale(onConfigUpdated: (ServerConfig) -> Unit) {
         _uiState.update {
             it.copy(
-                host = "100.115.92.40",
+                host = "",
                 portText = "22",
-                user = "admin",
-                password = "REMOVED_CREDENTIAL",
-                hermesUrl = "https://100.115.92.40:11434",
-                hermesKey = "REMOVED_CREDENTIAL",
+                user = "",
+                password = "",
+                hermesUrl = "",
+                hermesKey = "",
                 hermesModel = "hermes-3-llama-3.1-8b"
             )
         }
-        saveSettings(onConfigUpdated)
     }
 
     companion object {

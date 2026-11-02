@@ -27,6 +27,7 @@ import androidx.work.Data
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import androidx.work.ExistingWorkPolicy
 import com.example.data.security.EncryptedStorage
 import com.example.data.worker.SftpUploadWorker
 import org.json.JSONArray
@@ -108,6 +109,8 @@ class FilesViewModel(
         }
     }
 
+    fun currentRemotePath(): String = _uiState.value.currentPath
+
     fun loadFiles(path: String = _uiState.value.currentPath, config: ServerConfig) {
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         viewModelScope.launch(Dispatchers.IO) {
@@ -154,12 +157,21 @@ class FilesViewModel(
         destinationPath: String = _uiState.value.currentPath
     ) {
         if (uris.isEmpty()) return
-        val targetPath = destinationPath.ifBlank { "/" }
-        val queueFile = File(context.filesDir, "sftp-upload-${System.currentTimeMillis()}.json")
+        val targetPath = destinationPath.trim().let { path ->
+            when {
+                path.isBlank() -> "/"
+                path.startsWith("/") -> path.trimEnd('/').ifBlank { "/" }
+                else -> "/${path.trimEnd('/')}"
+            }
+        }
+        val batchId = "upload-${System.currentTimeMillis()}-${java.util.UUID.randomUUID()}"
+        val queueFile = File(context.filesDir, "sftp-$batchId.json")
         val queue = JSONArray()
         uris.forEach { uri ->
             runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            queue.put(uri.toString())
+            queue.put(org.json.JSONObject()
+                .put("uri", uri.toString())
+                .put("destinationPath", targetPath))
         }
         queueFile.writeText(queue.toString())
         val profileId = EncryptedStorage(context).getActiveProfileId()
@@ -167,12 +179,16 @@ class FilesViewModel(
             .setInputData(workDataOf(
                 SftpUploadWorker.KEY_QUEUE to queueFile.absolutePath,
                 SftpUploadWorker.KEY_PROFILE to profileId,
-                SftpUploadWorker.KEY_REMOTE_PATH to targetPath
+                SftpUploadWorker.KEY_REMOTE_PATH to targetPath,
+                SftpUploadWorker.KEY_BATCH_ID to batchId
             ))
             .addTag(SftpUploadWorker.TAG)
+            .addTag("${SftpUploadWorker.TAG}:$batchId")
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
-            "sftp_upload_queue", androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE, request
+            "sftp_upload_queue",
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            request
         )
         _uiState.update {
             it.copy(transferStatus = null, transferFailed = false, statusMessage = "Antrean upload berjalan di latar belakang (${uris.size} file).")

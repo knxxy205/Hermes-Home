@@ -45,6 +45,35 @@ class HermesApiClient {
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
+    private fun validateEndpoint(rawUrl: String): Result<Unit> = runCatching {
+        val parsed = java.net.URI(rawUrl.trim())
+        require(parsed.scheme.equals("https", ignoreCase = true) || parsed.scheme.equals("http", ignoreCase = true)) {
+            "URL Hermes harus menggunakan HTTP atau HTTPS"
+        }
+        require(!parsed.host.isNullOrBlank()) { "URL Hermes tidak valid" }
+        require(parsed.userInfo == null) { "Jangan masukkan username atau password ke dalam URL" }
+        require(parsed.scheme.equals("https", ignoreCase = true) || isPrivateHttpHost(parsed.host)) {
+            "HTTP tanpa enkripsi hanya diizinkan untuk server lokal atau jaringan privat. Gunakan HTTPS untuk host publik."
+        }
+    }
+
+    private fun isPrivateHttpHost(host: String): Boolean {
+        val value = host.lowercase().removePrefix("[").removeSuffix("]")
+        if (value == "localhost" || value.endsWith(".local") || value.endsWith(".lan") || value.endsWith(".ts.net")) return true
+        if (value == "::1" || value.startsWith("fc") || value.startsWith("fd") || value.startsWith("fe80:")) return true
+        val parts = value.split('.')
+        if (parts.size != 4) return false
+        val octets = parts.map { it.toIntOrNull()?.takeIf { number -> number in 0..255 } ?: return false }
+        val first = octets[0]
+        val second = octets[1]
+        return first == 10 ||
+            first == 127 ||
+            (first == 169 && second == 254) ||
+            (first == 172 && second in 16..31) ||
+            (first == 192 && second == 168) ||
+            (first == 100 && second in 64..127)
+    }
+
     private fun normalizeEndpoint(baseUrl: String): String {
         var cleanUrl = baseUrl.trim().trimEnd('/')
         if (cleanUrl.endsWith("/v1/chat/completions")) {
@@ -69,6 +98,7 @@ class HermesApiClient {
         }
 
         val endpoint = normalizeEndpoint(config.hermesBaseUrl)
+        validateEndpoint(endpoint).getOrElse { return@withContext Result.failure(it) }
 
         // Build messages array
         val messagesJsonArray = JSONArray()
@@ -204,6 +234,7 @@ class HermesApiClient {
         } else if (cleanUrl.endsWith("/v1")) {
             cleanUrl = cleanUrl.removeSuffix("/v1")
         }
+        validateEndpoint(cleanUrl).getOrElse { return@withContext Result.failure(it) }
 
         // Candidate endpoints covering 9router, OpenAI, Ollama, vLLM, LiteLLM, LMDeploy
         val candidateEndpoints = listOf(
@@ -249,6 +280,7 @@ class HermesApiClient {
 
     suspend fun testConnection(config: ServerConfig): Result<String> = withContext(Dispatchers.IO) {
         val endpoint = normalizeEndpoint(config.hermesBaseUrl)
+        validateEndpoint(endpoint).getOrElse { return@withContext Result.failure(it) }
         val bodyJson = JSONObject().apply {
             put("model", config.hermesModel)
             put("messages", JSONArray().put(JSONObject().apply {

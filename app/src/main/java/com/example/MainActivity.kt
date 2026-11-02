@@ -117,6 +117,7 @@ class MainActivity : FragmentActivity() {
             statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
         )
+        requestHighestSupportedRefreshRate()
 
         // Schedule periodic 1-hour background server health check
         ServerHealthWorker.schedulePeriodicCheck(applicationContext)
@@ -125,6 +126,24 @@ class MainActivity : FragmentActivity() {
             MyApplicationTheme {
                 TailHarnessApp(activity = this)
             }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun requestHighestSupportedRefreshRate() {
+        val displayModes = if (android.os.Build.VERSION.SDK_INT >= 30) {
+            display?.supportedModes?.toList().orEmpty()
+        } else {
+            windowManager.defaultDisplay.supportedModes.toList()
+        }
+        var preferredRate = 0f
+        for (mode in displayModes) {
+            if (mode.refreshRate > preferredRate) preferredRate = mode.refreshRate
+        }
+        if (preferredRate <= 60f) return
+
+        window.attributes = window.attributes.apply {
+            preferredRefreshRate = preferredRate
         }
     }
 }

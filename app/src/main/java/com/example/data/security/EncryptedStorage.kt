@@ -350,18 +350,20 @@ class EncryptedStorage(context: Context) {
             }
 
             prefs.edit()
-                .putString("$PREFIX_HERMES_SESSION${session.id}", jsonStr)
+                .putString("$PREFIX_HERMES_SESSION${session.id}", encrypt(jsonStr))
                 .putString(KEY_HERMES_SESSION_IDS, currentIds.joinToString(","))
                 .putString(KEY_ACTIVE_CHAT_SESSION_ID, session.id)
                 .apply()
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (_: Exception) {
+            android.util.Log.e("EncryptedStorage", "Gagal menyimpan sesi Hermes")
         }
     }
 
     fun loadChatSession(sessionId: String): HermesChatSession? {
-        val raw = prefs.getString("$PREFIX_HERMES_SESSION$sessionId", null) ?: return null
+        val stored = prefs.getString("$PREFIX_HERMES_SESSION$sessionId", null) ?: return null
         return try {
+            val raw = if (stored.trimStart().startsWith("{")) stored else decrypt(stored)
+            if (raw.isBlank()) return null
             val root = JSONObject(raw)
             val id = root.optString("id", sessionId)
             val title = root.optString("title", "Obrolan")
@@ -391,13 +393,15 @@ class EncryptedStorage(context: Context) {
                     )
                 )
             }
-            HermesChatSession(
+            val session = HermesChatSession(
                 id = id,
                 title = title,
                 createdAt = createdAt,
                 updatedAt = updatedAt,
                 messages = messages
             )
+            if (stored.trimStart().startsWith("{")) saveChatSession(session)
+            session
         } catch (e: Exception) {
             null
         }
@@ -454,13 +458,15 @@ class EncryptedStorage(context: Context) {
     // --- Custom Terminal Snippets Storage ---
 
     fun loadCustomSnippets(): List<CustomSnippet> {
-        val raw = prefs.getString(KEY_CUSTOM_SNIPPETS, null)
-        if (raw.isNullOrBlank()) {
+        val stored = prefs.getString(KEY_CUSTOM_SNIPPETS, null)
+        if (stored.isNullOrBlank()) {
             val defaults = CustomSnippet.getDefaultSnippets()
             saveAllSnippets(defaults)
             return defaults
         }
         return try {
+            val raw = if (stored.trimStart().startsWith("[")) stored else decrypt(stored)
+            if (raw.isBlank()) return CustomSnippet.getDefaultSnippets()
             val array = JSONArray(raw)
             val list = mutableListOf<CustomSnippet>()
             for (i in 0 until array.length()) {
@@ -481,6 +487,7 @@ class EncryptedStorage(context: Context) {
                 saveAllSnippets(defaults)
                 defaults
             } else {
+                if (stored.trimStart().startsWith("[")) saveAllSnippets(list)
                 list
             }
         } catch (e: Exception) {
@@ -504,9 +511,9 @@ class EncryptedStorage(context: Context) {
                 }
                 array.put(obj)
             }
-            prefs.edit().putString(KEY_CUSTOM_SNIPPETS, array.toString()).apply()
-        } catch (e: Exception) {
-            e.printStackTrace()
+            prefs.edit().putString(KEY_CUSTOM_SNIPPETS, encrypt(array.toString())).apply()
+        } catch (_: Exception) {
+            android.util.Log.e("EncryptedStorage", "Gagal menyimpan snippet terminal")
         }
     }
 

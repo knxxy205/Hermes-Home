@@ -46,6 +46,7 @@ class SftpManager {
 
     private var activeSession: Session? = null
     private var activeChannelSftp: ChannelSftp? = null
+    private var activeConnectionKey: String? = null
 
     // Sandbox storage for testing without live server
     private val sandboxFiles = mutableMapOf<String, MutableList<RemoteFileItem>>(
@@ -98,16 +99,18 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
     restart: unless-stopped
         """.trimIndent(),
-        "/home/admin/.env" to "TAILSCALE_AUTH_KEY=REMOVED_CREDENTIAL\nHERMES_API_KEY=REMOVED_CREDENTIAL\nSSH_PORT=22",
+        "/home/admin/.env" to "TAILSCALE_AUTH_KEY=<configure-on-server>\nHERMES_API_KEY=<configure-on-server>\nSSH_PORT=22",
         "/home/admin/backup_script.sh" to "#!/bin/bash\n# Homeserver backup script\necho 'Starting rsync backup...'\nrsync -avz /home/admin/data/ /mnt/backup/\necho 'Backup finished.'",
         "/home/admin/server_health.log" to "2026-09-16 08:00:01 [OK] Memory 21% used, NVMe SSD health 99%\n2026-09-16 09:00:01 [OK] Tailscale tunnel 100.x.y.z active, 0 packet loss"
     )
 
     private suspend fun getConnectedSftp(config: ServerConfig): ChannelSftp = withContext(Dispatchers.IO) {
+        val requestedKey = listOf(config.sshHost.trim().lowercase(), config.sshPort.toString(), config.sshUser).joinToString(":")
         val currentSftp = activeChannelSftp
-        if (currentSftp != null && currentSftp.isConnected && activeSession?.isConnected == true) {
+        if (currentSftp != null && currentSftp.isConnected && activeSession?.isConnected == true && activeConnectionKey == requestedKey) {
             return@withContext currentSftp
         }
+        close()
 
         val jsch = JSch()
         val trust = com.example.data.security.SshTrust.configure(jsch)
@@ -122,6 +125,7 @@ services:
 
         activeSession = session
         activeChannelSftp = channel
+        activeConnectionKey = requestedKey
         channel
     }
 
@@ -252,14 +256,21 @@ services:
         totalBytes: Long = -1L,
         onProgress: (Long) -> Unit = {}
     ): Result<Unit> = withContext(Dispatchers.IO) {
-        val targetPath = if (parentPath.endsWith("/")) "$parentPath$fileName" else "$parentPath/$fileName"
+        val safeFileName = fileName
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .filterNot { it == '\u0000' }
+            .takeIf { it.isNotBlank() && it != "." && it != ".." }
+            ?: return@withContext Result.failure(IllegalArgumentException("Nama file tidak valid"))
+        val normalizedParent = parentPath.trim().trimEnd('/').ifBlank { "/" }
+        val targetPath = if (normalizedParent == "/") "/$safeFileName" else "$normalizedParent/$safeFileName"
         if (useSandbox || !config.isSshConfigured) {
             val bytes = inputStream.use { it.readBytes() }
-            val list = sandboxFiles.getOrPut(parentPath) { mutableListOf() }
+            val list = sandboxFiles.getOrPut(normalizedParent) { mutableListOf() }
             list.removeAll { it.path == targetPath }
             list.add(
                 RemoteFileItem(
-                    name = fileName,
+                    name = safeFileName,
                     path = targetPath,
                     isDirectory = false,
                     sizeBytes = bytes.size.toLong(),
@@ -417,6 +428,7 @@ services:
             activeChannelSftp?.disconnect()
         } catch (_: Exception) {}
         activeChannelSftp = null
+        activeConnectionKey = null
 
         try {
             activeSession?.disconnect()

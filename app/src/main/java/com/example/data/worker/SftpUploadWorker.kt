@@ -30,10 +30,20 @@ class SftpUploadWorker(context: Context, params: WorkerParameters) : CoroutineWo
         val remotePath = inputData.getString(KEY_REMOTE_PATH) ?: "/"
         val queueFile = File(queuePath)
         try {
-            val uris = JSONArray(queueFile.readText()).let { json ->
-                (0 until json.length()).map { Uri.parse(json.getString(it)) }
+            val uploads = JSONArray(queueFile.readText()).let { json ->
+                (0 until json.length()).map { index ->
+                    val entry = json.get(index)
+                    if (entry is org.json.JSONObject) {
+                        UploadItem(
+                            uri = Uri.parse(entry.getString("uri")),
+                            destinationPath = normalizeRemotePath(entry.optString("destinationPath", remotePath))
+                        )
+                    } else {
+                        UploadItem(Uri.parse(entry.toString()), normalizeRemotePath(remotePath))
+                    }
+                }
             }
-            if (uris.isEmpty()) return@withContext Result.failure()
+            if (uploads.isEmpty()) return@withContext Result.failure()
 
             val storage = EncryptedStorage(applicationContext)
             val profile = storage.loadProfiles().firstOrNull { it.id == profileId }
@@ -47,13 +57,22 @@ class SftpUploadWorker(context: Context, params: WorkerParameters) : CoroutineWo
             var lastFileBytes = 0L
             var lastFileSize = -1L
             try {
-                setForeground(foreground("Mengunggah ${uris.size} file", 0, uris.size))
-                val sizes = uris.map { uri ->
-                    runCatching { applicationContext.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L }.getOrDefault(-1L)
+                setForeground(foreground("Mengunggah ${uploads.size} file", 0, uploads.size))
+                setProgress(Data.Builder()
+                    .putString(KEY_REMOTE_PATH, uploads.first().destinationPath)
+                    .putString(KEY_BATCH_ID, inputData.getString(KEY_BATCH_ID).orEmpty())
+                    .putInt(KEY_COUNT, uploads.size)
+                    .putInt(KEY_INDEX, 0)
+                    .putInt(KEY_PERCENT, 0)
+                    .build())
+                val sizes = uploads.map { upload ->
+                    runCatching { applicationContext.contentResolver.openAssetFileDescriptor(upload.uri, "r")?.use { it.length } ?: -1L }.getOrDefault(-1L)
                 }
                 queueTotalBytes = sizes.filter { it > 0 }.sum()
-                for ((index, uri) in uris.withIndex()) {
+                for ((index, upload) in uploads.withIndex()) {
                     if (isStopped) return@withContext Result.failure()
+                    val uri = upload.uri
+                    val itemRemotePath = upload.destinationPath
                     val name = displayName(uri)
                     lastFileName = name
                     lastFileBytes = 0L
@@ -66,7 +85,7 @@ class SftpUploadWorker(context: Context, params: WorkerParameters) : CoroutineWo
                         if (attemptStream == null) break
                         var lastReported = 0L
                         result = attemptStream.use {
-                            manager.uploadFile(remotePath, name, it, config, totalBytes = size) { fileBytes ->
+                            manager.uploadFile(itemRemotePath, name, it, config, totalBytes = size) { fileBytes ->
                                 val shouldReport = fileBytes - lastReported >= 512 * 1024 || (size > 0 && fileBytes >= size)
                                 if (!shouldReport) return@uploadFile
                                 lastReported = fileBytes
@@ -76,15 +95,17 @@ class SftpUploadWorker(context: Context, params: WorkerParameters) : CoroutineWo
                                     .putString(KEY_NAME, name)
                                     .putLong(KEY_FILE_BYTES, fileBytes)
                                     .putLong(KEY_FILE_SIZE, size)
+                                    .putString(KEY_REMOTE_PATH, itemRemotePath)
+                                    .putString(KEY_BATCH_ID, inputData.getString(KEY_BATCH_ID).orEmpty())
                                     .putInt(KEY_INDEX, index + 1)
-                                    .putInt(KEY_COUNT, uris.size)
+                                    .putInt(KEY_COUNT, uploads.size)
                                     .putInt(KEY_PERCENT, if (queueTotalBytes > 0) (((complete + fileBytes) * 100) / queueTotalBytes).toInt().coerceIn(0, 100) else 0)
                                     .putLong(KEY_DONE_BYTES, complete + fileBytes)
                                     .putLong(KEY_TOTAL_BYTES, queueTotalBytes)
                                     .build()
                                 runBlocking {
                                     setProgress(progress)
-                                    setForeground(foreground("${index + 1}/${uris.size} · $name · ${formatBytes(fileBytes)}${if (size > 0) " / ${formatBytes(size)}" else ""}", progress.getInt(KEY_PERCENT, 0), 100))
+                                    setForeground(foreground("${index + 1}/${uploads.size} · $name · ${formatBytes(fileBytes)}${if (size > 0) " / ${formatBytes(size)}" else ""}", progress.getInt(KEY_PERCENT, 0), 100))
                                 }
                             }
                         }
@@ -96,7 +117,9 @@ class SftpUploadWorker(context: Context, params: WorkerParameters) : CoroutineWo
                         complete += size.coerceAtLeast(fileUploadedBytes)
                         val percent = if (queueTotalBytes > 0) ((complete * 100) / queueTotalBytes).toInt().coerceIn(0, 100) else 0
                         setProgress(Data.Builder().putString(KEY_NAME, name).putLong(KEY_FILE_BYTES, complete)
-                            .putLong(KEY_FILE_SIZE, size).putInt(KEY_INDEX, index + 1).putInt(KEY_COUNT, uris.size)
+                            .putString(KEY_REMOTE_PATH, itemRemotePath)
+                            .putString(KEY_BATCH_ID, inputData.getString(KEY_BATCH_ID).orEmpty())
+                            .putLong(KEY_FILE_SIZE, size).putInt(KEY_INDEX, index + 1).putInt(KEY_COUNT, uploads.size)
                             .putInt(KEY_PERCENT, percent).putLong(KEY_DONE_BYTES, complete).putLong(KEY_TOTAL_BYTES, queueTotalBytes).build())
                     } else failed++
                 }
@@ -104,23 +127,37 @@ class SftpUploadWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 manager.close()
             }
             val summary = Data.Builder()
-                .putInt(KEY_COUNT, uris.size)
+                .putInt(KEY_COUNT, uploads.size)
                 .putInt(KEY_FAILED, failed)
+                .putString(KEY_BATCH_ID, inputData.getString(KEY_BATCH_ID).orEmpty())
                 .putLong(KEY_DONE_BYTES, complete)
                 .putLong(KEY_TOTAL_BYTES, queueTotalBytes)
                 .putString(KEY_NAME, lastFileName)
                 .putLong(KEY_FILE_BYTES, lastFileBytes)
                 .putLong(KEY_FILE_SIZE, lastFileSize)
-                .putString(KEY_REMOTE_PATH, remotePath)
+                .putString(KEY_REMOTE_PATH, uploads.last().destinationPath)
                 .build()
-            notifyUploadFinished(uris.size - failed, failed, complete, remotePath)
+            notifyUploadFinished(uploads.size - failed, failed, complete, uploads.last().destinationPath)
             Result.success(summary)
         } catch (e: Exception) {
-            notifyUploadFinished(0, 1, 0L, inputData.getString(KEY_REMOTE_PATH) ?: "/")
-            Result.failure(Data.Builder().putString("error", e.localizedMessage ?: "Unggahan gagal").build())
+            notifyUploadFinished(0, 1, 0L, remotePath)
+            Result.failure(Data.Builder()
+                .putString("error", e.localizedMessage ?: "Unggahan gagal")
+                .putString(KEY_BATCH_ID, inputData.getString(KEY_BATCH_ID).orEmpty())
+                .putString(KEY_REMOTE_PATH, remotePath)
+                .putInt(KEY_FAILED, 1)
+                .build())
         } finally {
             queueFile.delete()
         }
+    }
+
+    private data class UploadItem(val uri: Uri, val destinationPath: String)
+
+    private fun normalizeRemotePath(path: String): String {
+        val trimmed = path.trim()
+        if (trimmed.isBlank() || trimmed == "/") return "/"
+        return "/${trimmed.trim('/')}"
     }
 
     private fun displayName(uri: Uri): String {
@@ -183,6 +220,7 @@ class SftpUploadWorker(context: Context, params: WorkerParameters) : CoroutineWo
         const val KEY_QUEUE = "queue_file"
         const val KEY_PROFILE = "profile_id"
         const val KEY_REMOTE_PATH = "remote_path"
+        const val KEY_BATCH_ID = "batch_id"
         const val KEY_NAME = "file_name"
         const val KEY_FILE_BYTES = "file_bytes"
         const val KEY_FILE_SIZE = "file_size"

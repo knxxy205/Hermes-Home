@@ -65,6 +65,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -124,8 +125,13 @@ fun FilesScreen(
     val uploadWorkInfos by remember(context) {
         WorkManager.getInstance(context).getWorkInfosByTagFlow(SftpUploadWorker.TAG)
     }.collectAsState(initial = emptyList())
-    val currentUpload = uploadWorkInfos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
-        ?: uploadWorkInfos.lastOrNull()
+    val currentUpload = uploadWorkInfos
+        .filter { it.state == WorkInfo.State.RUNNING }
+        .firstOrNull()
+        ?: uploadWorkInfos
+            .filter { it.state == WorkInfo.State.ENQUEUED }
+            .firstOrNull()
+        ?: uploadWorkInfos.firstOrNull()
     val uploadRunning = currentUpload?.state == WorkInfo.State.RUNNING || currentUpload?.state == WorkInfo.State.ENQUEUED
     LaunchedEffect(currentUpload?.id, currentUpload?.state) {
         when (currentUpload?.state) {
@@ -135,13 +141,19 @@ fun FilesScreen(
                 val total = currentUpload.outputData.getLong(SftpUploadWorker.KEY_TOTAL_BYTES, -1L)
                 val path = currentUpload.outputData.getString(SftpUploadWorker.KEY_REMOTE_PATH).orEmpty()
                 val failed = currentUpload.outputData.getInt(SftpUploadWorker.KEY_FAILED, 0)
-                viewModel.reportBackgroundUploadResult("Upload selesai · ${count - failed}/$count berhasil · ${SftpUploadWorker.formatBytes(bytes)}${if (total > 0) " / ${SftpUploadWorker.formatBytes(total)}" else ""} ke $path", failed > 0)
+                val batchId = currentUpload.outputData.getString(SftpUploadWorker.KEY_BATCH_ID)
+                if (batchId != null) {
+                    viewModel.reportBackgroundUploadResult("Upload selesai · ${count - failed}/$count berhasil · ${SftpUploadWorker.formatBytes(bytes)}${if (total > 0) " / ${SftpUploadWorker.formatBytes(total)}" else ""} ke $path", failed > 0)
+                }
                 if (path == uiState.currentPath) viewModel.loadFiles(config = serverConfig)
             }
             WorkInfo.State.FAILED -> {
                 val count = currentUpload.outputData.getInt(SftpUploadWorker.KEY_FAILED, 0)
                 val path = currentUpload.outputData.getString(SftpUploadWorker.KEY_REMOTE_PATH).orEmpty()
-                viewModel.reportBackgroundUploadResult("Upload selesai dengan $count file gagal ke $path", true)
+                val batchId = currentUpload.outputData.getString(SftpUploadWorker.KEY_BATCH_ID)
+                if (batchId != null) {
+                    viewModel.reportBackgroundUploadResult("Upload selesai dengan $count file gagal ke $path", true)
+                }
                 if (path == uiState.currentPath) viewModel.loadFiles(config = serverConfig)
             }
             else -> Unit
@@ -181,7 +193,7 @@ fun FilesScreen(
     }
 
     // 1. Storage Access Framework (SAF) Multiple File Picker Contract initialized in root Composable
-    var uploadDestinationPath by remember { mutableStateOf(uiState.currentPath) }
+    var uploadDestinationPath by rememberSaveable { mutableStateOf(uiState.currentPath) }
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
@@ -208,7 +220,7 @@ fun FilesScreen(
     val launchFilePicker = {
         try {
             ensureUploadNotificationPermission()
-            uploadDestinationPath = uiState.currentPath
+            uploadDestinationPath = viewModel.currentRemotePath()
             filePickerLauncher.launch(arrayOf("*/*"))
         } catch (e: Exception) {
             Toast.makeText(
@@ -388,7 +400,8 @@ fun FilesScreen(
                                         val count = currentUpload?.progress?.getInt(SftpUploadWorker.KEY_COUNT, 0) ?: 0
                                         val bytes = currentUpload?.progress?.getLong(SftpUploadWorker.KEY_FILE_BYTES, 0L) ?: 0L
                                         val total = currentUpload?.progress?.getLong(SftpUploadWorker.KEY_FILE_SIZE, -1L) ?: -1L
-                                        "Mengunggah ke ${uiState.currentPath} · $index/$count · $fileName · ${SftpUploadWorker.formatBytes(bytes)}${if (total > 0) " / ${SftpUploadWorker.formatBytes(total)}" else ""}"
+                                        val targetPath = currentUpload?.progress?.getString(SftpUploadWorker.KEY_REMOTE_PATH).orEmpty()
+                                        "Mengunggah ke $targetPath · $index/$count · $fileName · ${SftpUploadWorker.formatBytes(bytes)}${if (total > 0) " / ${SftpUploadWorker.formatBytes(total)}" else ""}"
                                     } else "Mengunduh file",
                                     color = Color(0xff1e293b), fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
                                     maxLines = 2, overflow = TextOverflow.Ellipsis

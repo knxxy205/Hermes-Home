@@ -510,7 +510,7 @@ fun SettingsScreen(
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            item(key = "profiles", contentType = "form") {
+            item(key = "profiles", contentType = "profiles") {
             // Profile Selector Card (Rumah LAN vs Di Luar Tailscale)
             TailHarnessCard(
                 backgroundColor = NavyDarkCard,
@@ -695,7 +695,7 @@ fun SettingsScreen(
             }
 
             }
-            item(key = "security", contentType = "summary") {
+            item(key = "security", contentType = "security_summary") {
             // Security Info Card (Android Keystore + Hardware-backed encryption)
             TailHarnessCard(
                 backgroundColor = NavyDarkCard,
@@ -755,7 +755,7 @@ fun SettingsScreen(
             }
 
             }
-            item(key = "ssh", contentType = "form") {
+            item(key = "ssh", contentType = "ssh_form") {
             // SECTION 1: HOMESERVER SSH VIA TAILSCALE
             TailHarnessCard(
                 backgroundColor = NavyDarkCard,
@@ -921,7 +921,7 @@ fun SettingsScreen(
             }
 
             }
-            item(key = "hermes", contentType = "form") {
+            item(key = "hermes", contentType = "hermes_form") {
             // SECTION 2: HERMES AI AGENT (OPENAI-COMPATIBLE)
             TailHarnessCard(
                 backgroundColor = NavyDarkCard,
@@ -1175,7 +1175,7 @@ fun SettingsScreen(
             ) {
                 Icon(Icons.Default.VpnKey, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Isi Preset Contoh Tailscale", fontSize = 13.sp)
+                Text("Isi contoh konfigurasi (tanpa kredensial)", fontSize = 13.sp)
             }
 
             Spacer(modifier = Modifier.height(16.dp))
