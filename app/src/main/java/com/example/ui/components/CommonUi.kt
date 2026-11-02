@@ -5,6 +5,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -106,14 +108,28 @@ fun CustomScreenHeader(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun TailHarnessCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     backgroundColor: Color = NavyDarkCard,
     borderColor: Color = NavyCardBorder,
     content: @Composable () -> Unit
 ) {
-    if (onClick != null) {
+    if (onClick != null && onLongClick != null) {
+        Surface(
+            modifier = modifier
+                .fillMaxWidth()
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            shape = RoundedCornerShape(22.dp),
+            shadowElevation = 2.dp,
+            color = backgroundColor,
+            border = BorderStroke(1.dp, borderColor)
+        ) {
+            content()
+        }
+    } else if (onClick != null) {
         Surface(
             modifier = modifier.fillMaxWidth(),
             shape = RoundedCornerShape(22.dp),

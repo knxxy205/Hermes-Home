@@ -9,6 +9,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -172,18 +174,32 @@ fun FilesScreen(
     var renameNewName by remember { mutableStateOf("") }
 
     var itemToDelete by remember { mutableStateOf<RemoteFileItem?>(null) }
+    var itemsToDelete by remember { mutableStateOf<List<RemoteFileItem>?>(null) }
+    var selectedPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    LaunchedEffect(uiState.currentPath) { selectedPaths = emptySet() }
+    val selectedItems = remember(uiState.files, selectedPaths) {
+        uiState.files.filter { it.path in selectedPaths }
+    }
+    fun toggleSelection(item: RemoteFileItem) {
+        selectedPaths = if (item.path in selectedPaths) selectedPaths - item.path else selectedPaths + item.path
+    }
+    fun openOrSelect(item: RemoteFileItem, open: () -> Unit) {
+        if (selectedPaths.isNotEmpty()) toggleSelection(item) else open()
+    }
 
     // Native Back-Button Navigation:
     // 1. If any dialog/file preview is open, dismiss it.
     // 2. If in a sub-directory, navigate up to parent folder.
     // 3. When at root directory ("/") and no dialog is open, BackHandler is disabled, allowing default system back behavior (closing tab/app).
     val canNavigateUp = viewModel.canNavigateUp()
-    val isAnyOverlayOpen = uiState.imagePreview != null || uiState.viewingFileContent != null || showNewFolderDialog || showNewFileDialog || itemToRename != null || itemToDelete != null
+    val isAnyOverlayOpen = selectedPaths.isNotEmpty() || uiState.imagePreview != null || uiState.viewingFileContent != null || showNewFolderDialog || showNewFileDialog || itemToRename != null || itemToDelete != null || itemsToDelete != null
 
     BackHandler(enabled = isTabActive && (canNavigateUp || isAnyOverlayOpen)) {
         when {
             showNewFolderDialog -> showNewFolderDialog = false
             showNewFileDialog -> showNewFileDialog = false
+            selectedPaths.isNotEmpty() -> selectedPaths = emptySet()
             itemToRename != null -> itemToRename = null
             itemToDelete != null -> itemToDelete = null
             uiState.imagePreview != null -> viewModel.closeImagePreview()
@@ -304,6 +320,36 @@ fun FilesScreen(
                     }
                 }
             )
+
+            if (selectedPaths.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xffdbeafe))
+                        .border(1.dp, Color(0xff93c5fd), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { selectedPaths = emptySet() }) {
+                        Icon(Icons.Default.Close, "Batal memilih", tint = Color(0xff1d4ed8))
+                    }
+                    Text("${selectedItems.size} dipilih", color = Color(0xff1e3a8a), fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(
+                        onClick = {
+                            viewModel.downloadFiles(selectedItems, context.cacheDir, serverConfig)
+                            selectedPaths = emptySet()
+                        },
+                        enabled = selectedItems.any { !it.isDirectory }
+                    ) {
+                        Icon(Icons.Default.SaveAlt, "Download pilihan", tint = Color(0xff1d4ed8))
+                    }
+                    IconButton(onClick = { itemsToDelete = selectedItems }) {
+                        Icon(Icons.Default.Delete, "Hapus pilihan", tint = TerminalRed)
+                    }
+                }
+            }
 
             // Path Navigation & Action Bar
             Row(
@@ -535,12 +581,15 @@ fun FilesScreen(
                                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         pair.forEach { folder ->
                                             Box(Modifier.weight(1f)) {
-                                                FileItemCard(
-                                                    item = folder,
-                                                    onOpen = { viewModel.navigateTo(folder.path, serverConfig) },
-                                                    onRename = { itemToRename = folder; renameNewName = folder.name },
-                                                    onDelete = { itemToDelete = folder },
-                                                    onDownload = {}
+                                                 FileItemCard(
+                                                     item = folder,
+                                                     onOpen = { openOrSelect(folder) { viewModel.navigateTo(folder.path, serverConfig) } },
+                                                     onLongClick = { toggleSelection(folder) },
+                                                     onRename = { itemToRename = folder; renameNewName = folder.name },
+                                                     onDelete = { itemToDelete = folder },
+                                                     onDownload = {},
+                                                     isSelected = folder.path in selectedPaths,
+                                                     showPath = uiState.searchQuery.isNotBlank()
                                                 )
                                             }
                                         }
@@ -558,12 +607,15 @@ fun FilesScreen(
                                 FileItemCard(
                                     item = item,
                                     onOpen = {
-                                        if (item.isDirectory) {
-                                            viewModel.navigateTo(item.path, serverConfig)
-                                        } else {
-                                            viewModel.readFile(item, serverConfig, context.cacheDir)
+                                        openOrSelect(item) {
+                                            if (item.isDirectory) {
+                                                viewModel.navigateTo(item.path, serverConfig)
+                                            } else {
+                                                viewModel.readFile(item, serverConfig, context.cacheDir)
+                                            }
                                         }
                                     },
+                                    onLongClick = { toggleSelection(item) },
                                     onRename = {
                                         itemToRename = item
                                         renameNewName = item.name
@@ -574,7 +626,9 @@ fun FilesScreen(
                                     onDownload = {
                                         val dest = File(context.cacheDir, item.name)
                                         viewModel.downloadFile(item, dest, serverConfig)
-                                    }
+                                    },
+                                    isSelected = item.path in selectedPaths,
+                                    showPath = uiState.searchQuery.isNotBlank()
                                 )
                             }
                         }
@@ -799,6 +853,36 @@ fun FilesScreen(
         )
     }
 
+    val selectedDeleteItems = itemsToDelete
+    if (selectedDeleteItems != null) {
+        AlertDialog(
+            onDismissRequest = { itemsToDelete = null },
+            containerColor = Color.White,
+            titleContentColor = Color(0xff1e293b),
+            shape = RoundedCornerShape(28.dp),
+            title = { Text("Hapus ${selectedDeleteItems.size} item?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Item terpilih akan dihapus dari ${uiState.currentPath}. Tindakan ini tidak dapat dibatalkan.",
+                    color = Color(0xff64748b)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteItems(selectedDeleteItems, serverConfig)
+                        itemsToDelete = null
+                        selectedPaths = emptySet()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xffbe123c))
+                ) { Text("Hapus", color = Color.White, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { itemsToDelete = null }) { Text("Batal", color = Color(0xff64748b)) }
+            }
+        )
+    }
+
     uiState.imagePreview?.let { preview ->
         androidx.compose.ui.window.Dialog(onDismissRequest = { viewModel.closeImagePreview() },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
@@ -890,12 +974,16 @@ fun FilesScreen(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun FileItemCard(
     item: RemoteFileItem,
     onOpen: () -> Unit,
+    onLongClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    isSelected: Boolean = false,
+    showPath: Boolean = false
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -915,10 +1003,13 @@ fun FileItemCard(
         )
         val (tint, accent) = palette[Math.floorMod(item.name.hashCode(), palette.size)]
         Surface(
-            onClick = onOpen,
             shape = RoundedCornerShape(22.dp),
             color = tint,
-            modifier = Modifier.fillMaxWidth().testTag("file_item_${item.name}")
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(onClick = onOpen, onLongClick = onLongClick)
+                .then(if (isSelected) Modifier.border(3.dp, Color(0xff2563eb), RoundedCornerShape(22.dp)) else Modifier)
+                .testTag("file_item_${item.name}")
         ) {
             Column(Modifier.padding(16.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -937,7 +1028,14 @@ fun FileItemCard(
                 Spacer(Modifier.height(12.dp))
                 Text(item.name, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Folder", color = accent, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                 Text(
+                     if (showPath) item.path else "Folder",
+                     color = accent,
+                     fontSize = 12.sp,
+                     maxLines = 1,
+                     overflow = TextOverflow.Ellipsis,
+                     modifier = Modifier.padding(top = 4.dp)
+                 )
             }
         }
         return
@@ -946,8 +1044,9 @@ fun FileItemCard(
     TailHarnessCard(
         modifier = Modifier.testTag("file_item_${item.name}"),
         onClick = onOpen,
+        onLongClick = onLongClick,
         backgroundColor = NavyDarkCard,
-        borderColor = NavyCardBorder
+        borderColor = if (isSelected) Color(0xff2563eb) else NavyCardBorder
     ) {
         Row(
             modifier = Modifier
@@ -988,7 +1087,7 @@ fun FileItemCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = item.formattedSize,
                         color = TextSecondary,
@@ -1004,8 +1103,18 @@ fun FileItemCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                    }
-                }
+                 }
+                 if (showPath) {
+                     Text(
+                         text = item.path,
+                         color = TextSecondary,
+                         fontSize = 11.sp,
+                         maxLines = 1,
+                         overflow = TextOverflow.Ellipsis,
+                         modifier = Modifier.padding(top = 2.dp)
+                     )
+                 }
+             }
             }
 
             // 3-dots Action Menu

@@ -179,6 +179,72 @@ services:
         }
     }
 
+    suspend fun searchFiles(
+        rootPath: String,
+        query: String,
+        config: ServerConfig,
+        useSandbox: Boolean = false
+    ): Result<List<RemoteFileItem>> = withContext(Dispatchers.IO) {
+        val needle = query.trim()
+        if (needle.isBlank()) return@withContext Result.success(emptyList())
+
+        if (useSandbox || !config.isSshConfigured) {
+            val matches = mutableListOf<RemoteFileItem>()
+            val visited = mutableSetOf<String>()
+
+            fun walk(path: String) {
+                if (!visited.add(path)) return
+                for (item in sandboxFiles[path].orEmpty()) {
+                    if (item.name.contains(needle, ignoreCase = true)) matches += item
+                    if (item.isDirectory) walk(item.path)
+                }
+            }
+
+            walk(rootPath)
+            return@withContext Result.success(matches.sortedWith(compareBy<RemoteFileItem> { !it.isDirectory }.thenBy { it.path.lowercase() }))
+        }
+
+        try {
+            val sftp = getConnectedSftp(config)
+            val matches = mutableListOf<RemoteFileItem>()
+            val visited = mutableSetOf<String>()
+            val maxDepth = 64
+            val maxResults = 5_000
+
+            fun walk(path: String, depth: Int) {
+                if (depth > maxDepth || matches.size >= maxResults || !visited.add(path)) return
+                val entries = runCatching {
+                    @Suppress("UNCHECKED_CAST")
+                    sftp.ls(path) as Vector<ChannelSftp.LsEntry>
+                }.getOrNull() ?: return
+
+                for (entry in entries) {
+                    if (matches.size >= maxResults) break
+                    val filename = entry.filename
+                    if (filename == "." || filename == "..") continue
+                    val attrs = entry.attrs
+                    val isDirectory = attrs.isDir
+                    val fullPath = if (path == "/" || path.endsWith("/")) "$path$filename" else "$path/$filename"
+                    val item = RemoteFileItem(
+                        name = filename,
+                        path = fullPath,
+                        isDirectory = isDirectory,
+                        sizeBytes = attrs.size,
+                        permissions = attrs.permissionsString ?: "-",
+                        modifiedTime = attrs.mTime.toLong()
+                    )
+                    if (filename.contains(needle, ignoreCase = true)) matches += item
+                    if (isDirectory) walk(fullPath, depth + 1)
+                }
+            }
+
+            walk(rootPath, 0)
+            Result.success(matches.sortedWith(compareBy<RemoteFileItem> { !it.isDirectory }.thenBy { it.path.lowercase() }))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun createDirectory(
         parentPath: String,
         folderName: String,

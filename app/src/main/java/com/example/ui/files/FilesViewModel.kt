@@ -58,6 +58,7 @@ class FilesViewModel(
     private val _uiState = MutableStateFlow(FilesUiState())
     val uiState: StateFlow<FilesUiState> = _uiState.asStateFlow()
     private var previewJob: Job? = null
+    private var searchJob: Job? = null
     private var previewGeneration = 0
 
     fun closeImagePreview() {
@@ -70,7 +71,17 @@ class FilesViewModel(
 
     fun updateSearchQuery(query: String) {
         _uiState.update { it.copy(searchQuery = query) }
+        searchJob?.cancel()
+        val currentPath = _uiState.value.currentPath
+        val config = _lastConfig ?: return
+        if (query.isBlank()) {
+            loadFiles(currentPath, config)
+        } else {
+            searchFiles(currentPath, query, _lastConfig ?: return)
+        }
     }
+
+    private var _lastConfig: ServerConfig? = null
 
     fun clearStatusMessage() {
         _uiState.update { it.copy(statusMessage = null) }
@@ -89,7 +100,8 @@ class FilesViewModel(
     }
 
     fun navigateTo(path: String, config: ServerConfig) {
-        _uiState.update { it.copy(currentPath = path) }
+        searchJob?.cancel()
+        _uiState.update { it.copy(currentPath = path, searchQuery = "") }
         loadFiles(path, config)
     }
 
@@ -112,6 +124,7 @@ class FilesViewModel(
     fun currentRemotePath(): String = _uiState.value.currentPath
 
     fun loadFiles(path: String = _uiState.value.currentPath, config: ServerConfig) {
+        _lastConfig = config
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         viewModelScope.launch(Dispatchers.IO) {
             val result = sftpManager.listFiles(
@@ -135,6 +148,33 @@ class FilesViewModel(
                         it.copy(
                             isLoading = false,
                             errorMessage = error?.localizedMessage ?: "Gagal memuat daftar file SFTP"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun searchFiles(path: String, query: String, config: ServerConfig) {
+        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+        searchJob = viewModelScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(250)
+            val result = sftpManager.searchFiles(
+                rootPath = path,
+                query = query,
+                config = config,
+                useSandbox = !config.isSshConfigured
+            )
+            withContext(Dispatchers.Main) {
+                if (result.isSuccess) {
+                    _uiState.update {
+                        it.copy(files = result.getOrNull().orEmpty(), isLoading = false, errorMessage = null)
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            errorMessage = result.exceptionOrNull()?.localizedMessage ?: "Gagal mencari file"
                         )
                     }
                 }
@@ -363,6 +403,82 @@ class FilesViewModel(
                         )
                     }
                 }
+            }
+        }
+    }
+
+    fun downloadFiles(items: List<RemoteFileItem>, cacheDir: File, config: ServerConfig) {
+        val files = items.filterNot { it.isDirectory }
+        if (files.isEmpty()) {
+            _uiState.update { it.copy(statusMessage = "Tidak ada file yang bisa di-download") }
+            return
+        }
+        _uiState.update {
+            it.copy(
+                isDownloading = true,
+                downloadingFileName = "${files.size} file",
+                transferStatus = null,
+                transferFailed = false
+            )
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            var completed = 0
+            val failures = mutableListOf<String>()
+            files.forEach { item ->
+                val result = sftpManager.downloadToLocal(
+                    remotePath = item.path,
+                    targetFile = File(cacheDir, item.name),
+                    config = config,
+                    useSandbox = !config.isSshConfigured
+                )
+                if (result.isSuccess) completed++ else failures += item.name
+            }
+            withContext(Dispatchers.Main) {
+                _uiState.update {
+                    it.copy(
+                        isDownloading = false,
+                        downloadingFileName = null,
+                        transferStatus = if (failures.isEmpty()) {
+                            "Download selesai · $completed file disimpan di cache aplikasi"
+                        } else {
+                            "Download selesai · $completed berhasil, ${failures.size} gagal"
+                        },
+                        transferFailed = failures.isNotEmpty(),
+                        statusMessage = failures.takeIf { it.isNotEmpty() }?.let { names ->
+                            "Gagal: ${names.joinToString(", ")}"
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    fun deleteItems(items: List<RemoteFileItem>, config: ServerConfig) {
+        if (items.isEmpty()) return
+        val currentPath = _uiState.value.currentPath
+        viewModelScope.launch(Dispatchers.IO) {
+            var completed = 0
+            val failures = mutableListOf<String>()
+            items.forEach { item ->
+                val result = sftpManager.delete(
+                    path = item.path,
+                    isDirectory = item.isDirectory,
+                    config = config,
+                    useSandbox = !config.isSshConfigured
+                )
+                if (result.isSuccess) completed++ else failures += item.name
+            }
+            withContext(Dispatchers.Main) {
+                _uiState.update {
+                    it.copy(
+                        statusMessage = if (failures.isEmpty()) {
+                            "$completed item dihapus"
+                        } else {
+                            "$completed berhasil dihapus, ${failures.size} gagal: ${failures.joinToString(", ")}"
+                        }
+                    )
+                }
+                loadFiles(currentPath, config)
             }
         }
     }
