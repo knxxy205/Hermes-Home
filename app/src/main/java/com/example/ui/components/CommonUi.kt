@@ -25,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -54,16 +55,15 @@ fun CustomScreenHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+            .padding(horizontal = 20.dp, vertical = 20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Icon badge with rounded corner box, dimmed orange bg and thin orange border
+        // Quiet blue badge shared by the four main screens.
         Box(
             modifier = Modifier
-                .size(46.dp)
-                .clip(RoundedCornerShape(13.dp))
-                .background(BurntOrangeBadgeBg)
-                .border(1.dp, BurntOrangeBorder, RoundedCornerShape(13.dp)),
+                .size(44.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(BurntOrangeBadgeBg),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -81,10 +81,12 @@ fun CustomScreenHeader(
                 text = title,
                 style = MaterialTheme.typography.titleLarge.copy(
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 20.sp,
-                    letterSpacing = 0.15.sp,
+                    fontSize = 24.sp,
+                    letterSpacing = (-0.7).sp,
                     color = TextPrimary
-                )
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = subtitle,
@@ -92,7 +94,8 @@ fun CustomScreenHeader(
                     color = TextSecondary,
                     fontSize = 12.sp
                 ),
-                maxLines = 1
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
 
@@ -113,7 +116,8 @@ fun TailHarnessCard(
     if (onClick != null) {
         Surface(
             modifier = modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(22.dp),
+            shadowElevation = 2.dp,
             color = backgroundColor,
             border = BorderStroke(1.dp, borderColor),
             onClick = onClick
@@ -123,7 +127,8 @@ fun TailHarnessCard(
     } else {
         Surface(
             modifier = modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(22.dp),
+            shadowElevation = 2.dp,
             color = backgroundColor,
             border = BorderStroke(1.dp, borderColor)
         ) {
@@ -151,7 +156,7 @@ fun PillChip(
                 RoundedCornerShape(50)
             )
             .clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 7.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
         Row(
@@ -188,16 +193,16 @@ fun ShortcutKeyButton(
     isActive: Boolean = false,
     highlightColor: Color = BurntOrange
 ) {
-    val bg = if (isActive) highlightColor else Color(0xFF1E2636)
-    val borderColor = if (isActive) highlightColor else Color(0xFF2D394E)
-    val textColor = if (isActive) Color(0xFF0A0E17) else if (label.startsWith("^") || label == "CTRL" || label == "ESC" || label == "TAB") BurntOrange else Color(0xFFE2E8F0)
+    val bg = if (isActive) highlightColor else NavyDarkCard
+    val borderColor = if (isActive) highlightColor else NavyDarkBorder
+    val textColor = if (isActive) Color.White else TextPrimary
 
     Box(
         modifier = modifier
-            .height(36.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .height(48.dp)
+            .clip(RoundedCornerShape(12.dp))
             .background(bg)
-            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .border(1.dp, borderColor, RoundedCornerShape(12.dp))
             .clickable { onClick() }
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center
@@ -221,8 +226,8 @@ fun StatusBadge(
     modifier: Modifier = Modifier
 ) {
     val badgeColor = if (isSuccess) TerminalGreen else BurntOrange
-    val badgeBg = if (isSuccess) Color(0xFF0F2614) else BurntOrangeBadgeBg
-    val badgeBorder = if (isSuccess) Color(0xFF1B4D25) else BurntOrangeBorder
+    val badgeBg = if (isSuccess) Color(0xFFE8F7F1) else BurntOrangeBadgeBg
+    val badgeBorder = if (isSuccess) Color(0xFFD0EDE0) else BurntOrangeBorder
 
     Row(
         modifier = modifier

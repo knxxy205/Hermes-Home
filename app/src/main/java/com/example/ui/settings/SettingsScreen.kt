@@ -67,6 +67,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -176,7 +177,7 @@ fun SettingsScreen(
                         Toast.makeText(context, "Backup Copied!", Toast.LENGTH_SHORT).show()
                         showExportDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = NavyDarkBackground)
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = Color.White)
                 ) {
                     Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
@@ -285,7 +286,7 @@ fun SettingsScreen(
                             showImportConfirmDialog = true
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = NavyDarkBackground)
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = Color.White)
                 ) {
                     Text("Lanjutkan Import", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
@@ -331,7 +332,7 @@ fun SettingsScreen(
                             Toast.makeText(context, "Gagal import: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = NavyDarkBackground)
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = Color.White)
                 ) {
                     Text("Ya, Timpa & Restore", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
@@ -352,7 +353,7 @@ fun SettingsScreen(
         CustomScreenHeader(
             icon = Icons.Default.Settings,
             title = "Settings",
-            subtitle = "Kredensial & Jaringan Privat Tailscale"
+            subtitle = "Koneksi, profil & keamanan"
         )
 
         Column(
@@ -360,18 +361,18 @@ fun SettingsScreen(
                 .weight(1f)
                 .fillMaxWidth()
                 .verticalScroll(scrollState)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             // Profile Selector Card (Rumah LAN vs Di Luar Tailscale)
             TailHarnessCard(
                 backgroundColor = NavyDarkCard,
-                borderColor = BurntOrange.copy(alpha = 0.5f)
+                borderColor = NavyCardBorder
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(14.dp),
+                        .padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(
@@ -395,15 +396,15 @@ fun SettingsScreen(
                             )
                         }
                         StatusBadge(
-                            text = if (uiState.activeProfile.id == ConnectionProfile.PROFILE_HOME_ID) "LAN RUMAH"
-                            else if (uiState.activeProfile.id == ConnectionProfile.PROFILE_TAILSCALE_ID) "TAILSCALE"
-                            else "KUSTOM",
+                            text = if (uiState.activeProfile.id == ConnectionProfile.PROFILE_HOME_ID) "LAN"
+                            else if (uiState.activeProfile.id == ConnectionProfile.PROFILE_TAILSCALE_ID) "Tailscale"
+                            else "Kustom",
                             isSuccess = true
                         )
                     }
 
                     Text(
-                        text = "Simpan profil kredensial terpisah: untuk di rumah (LAN) dan di luar via Tailscale VPN. Ganti profil dengan 1 sentuhan:",
+                        text = "Pilih koneksi untuk di rumah atau saat bepergian.",
                         color = TextSecondary,
                         fontSize = 12.sp,
                         lineHeight = 16.sp
@@ -583,7 +584,7 @@ fun SettingsScreen(
                             }
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Keystore AES-256-GCM",
+                                text = "Kredensial terlindungi",
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
@@ -591,12 +592,12 @@ fun SettingsScreen(
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         StatusBadge(
-                            text = "HARDWARE SECURE",
+                            text = "Terenkripsi",
                             isSuccess = true
                         )
                     }
                     Text(
-                        text = "Kredensial disimpan terenkripsi di chip keamanan Android KeyStore. Tidak ada cleartext atau Base64 fallback.",
+                        text = "Kredensial disimpan terenkripsi menggunakan Android Keystore.",
                         color = TextSecondary,
                         fontSize = 12.sp,
                         lineHeight = 16.sp
@@ -629,7 +630,7 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "Koneksi SSH Homeserver",
+                                text = "Koneksi SSH",
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp
@@ -793,13 +794,13 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "Hermes AI Agent API",
+                                text = "Hermes Agent",
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp
                             )
                             Text(
-                                text = "Endpoint OpenAI-compatible (Ollama, vLLM, LMDeploy, 9router)",
+                                text = "Hubungkan ke API agent pribadi kamu",
                                 color = TextSecondary,
                                 fontSize = 11.sp
                             )
@@ -995,7 +996,7 @@ fun SettingsScreen(
                 onClick = { viewModel.saveSettings(onConfigUpdated) },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = BurntOrange,
-                    contentColor = NavyDarkBackground
+                    contentColor = Color.White
                 ),
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
@@ -1005,7 +1006,7 @@ fun SettingsScreen(
             ) {
                 Icon(Icons.Default.Save, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Simpan Kredensial ke Keystore", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text("Simpan pengaturan", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
 
             // Quick Preset / Demo Button

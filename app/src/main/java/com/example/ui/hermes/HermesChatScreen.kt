@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -67,6 +68,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -476,14 +478,14 @@ fun HermesChatScreen(
     ) {
         // Screen Header
         CustomScreenHeader(
-            icon = Icons.Default.SmartToy,
-            title = "Hermes Agent",
+            icon = Icons.Default.Forum,
+            title = "Hermes",
             subtitle = if (currentSessionTitle.isNotBlank() && currentSessionTitle != "Obrolan Baru") {
                 "$currentSessionTitle • ${serverConfig.hermesModel}"
             } else if (serverConfig.isHermesConfigured) {
                 "${serverConfig.hermesModel} @ ${serverConfig.hermesBaseUrl}"
             } else {
-                "Hermes Agent (Standby)"
+                "Asisten pribadi untuk server kamu"
             },
             trailingContent = {
                 Row(
@@ -564,9 +566,9 @@ fun HermesChatScreen(
                     modifier = Modifier
                         .clip(RoundedCornerShape(12.dp))
                         .background(NavyDarkSurface)
-                        .border(1.dp, BurntOrange.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                        .border(1.dp, NavyDarkBorder, RoundedCornerShape(12.dp))
                         .clickable { doSendMessage(cmd) }
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -594,8 +596,8 @@ fun HermesChatScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             items(messages, key = { it.id }) { msg ->
                 ChatMessageItem(
@@ -626,7 +628,7 @@ fun HermesChatScreen(
                                 .border(1.dp, BurntOrangeBorder, CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.SmartToy, contentDescription = null, tint = BurntOrange, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.Forum, contentDescription = null, tint = BurntOrange, modifier = Modifier.size(16.dp))
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         CircularProgressIndicator(
@@ -763,7 +765,7 @@ fun HermesChatScreen(
                 },
                 enabled = true,
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .background(BurntOrange)
                     .testTag("hermes_send_button")
@@ -771,14 +773,14 @@ fun HermesChatScreen(
                 if (isSending) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
-                        color = NavyDarkBackground,
+                        color = Color.White,
                         strokeWidth = 2.5.dp
                     )
                 } else {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Send,
                         contentDescription = "Send",
-                        tint = NavyDarkBackground,
+                        tint = Color.White,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -868,13 +870,13 @@ fun HermesChatScreen(
                     Icon(
                         Icons.Default.Add,
                         contentDescription = null,
-                        tint = NavyDarkBackground,
+                        tint = Color.White,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Mulai Obrolan Baru",
-                        color = NavyDarkBackground,
+                        color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp
                     )
@@ -1038,7 +1040,7 @@ fun ChatMessageItem(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        Icons.Default.SmartToy,
+                        Icons.Default.Forum,
                         contentDescription = null,
                         tint = if (message.isError) TerminalRed else BurntOrange,
                         modifier = Modifier.size(16.dp)
@@ -1051,10 +1053,10 @@ fun ChatMessageItem(
                 modifier = Modifier
                     .clip(
                         RoundedCornerShape(
-                            topStart = 16.dp,
-                            topEnd = 16.dp,
-                            bottomStart = if (isUser) 16.dp else 4.dp,
-                            bottomEnd = if (isUser) 4.dp else 16.dp
+                            topStart = 22.dp,
+                            topEnd = 22.dp,
+                            bottomStart = if (isUser) 22.dp else 6.dp,
+                            bottomEnd = if (isUser) 6.dp else 22.dp
                         )
                     )
                     .background(if (isUser) BurntOrangePillBg else NavyDarkCard)
@@ -1066,13 +1068,13 @@ fun ChatMessageItem(
                             else -> NavyCardBorder
                         },
                         RoundedCornerShape(
-                            topStart = 16.dp,
-                            topEnd = 16.dp,
-                            bottomStart = if (isUser) 16.dp else 4.dp,
-                            bottomEnd = if (isUser) 4.dp else 16.dp
+                            topStart = 22.dp,
+                            topEnd = 22.dp,
+                            bottomStart = if (isUser) 22.dp else 6.dp,
+                            bottomEnd = if (isUser) 6.dp else 22.dp
                         )
                     )
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
             ) {
                 Column {
                     SelectionContainer {
@@ -1089,7 +1091,7 @@ fun ChatMessageItem(
                                 text = content,
                                 color = if (message.isError) TerminalRed else TextPrimary,
                                 fontSize = 14.sp,
-                                lineHeight = 20.sp
+                                lineHeight = 23.sp
                             )
                         }
                     }
@@ -1212,7 +1214,7 @@ fun FormattedCodeAndTextMessage(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(8.dp))
-                        .background(TerminalBg)
+                        .background(NavyDarkSurface)
                         .border(1.dp, NavyDarkBorder, RoundedCornerShape(8.dp))
                         .padding(8.dp)
                 ) {
@@ -1277,13 +1279,13 @@ fun FormattedCodeAndTextMessage(
                                         Icon(
                                             Icons.Default.PlayArrow,
                                             contentDescription = "Run on Server",
-                                            tint = NavyDarkBackground,
+                                            tint = Color.White,
                                             modifier = Modifier.size(12.dp)
                                         )
                                         Spacer(modifier = Modifier.width(3.dp))
                                         Text(
                                             "Run on Server",
-                                            color = NavyDarkBackground,
+                                            color = Color.White,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold
                                         )

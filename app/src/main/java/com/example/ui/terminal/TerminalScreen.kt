@@ -176,7 +176,7 @@ fun TerminalScreen(
                         ) {
                             Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Disconnect", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Putus", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                     is TerminalConnectionState.Connecting -> {
@@ -197,7 +197,7 @@ fun TerminalScreen(
                             },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = BurntOrange,
-                                contentColor = NavyDarkBackground
+                                contentColor = Color.White
                             ),
                             shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
@@ -206,7 +206,7 @@ fun TerminalScreen(
                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                if (serverConfig.isSshConfigured) "Connect" else "Sandbox",
+                                if (serverConfig.isSshConfigured) "Hubungkan" else "Sandbox",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -220,8 +220,7 @@ fun TerminalScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(NavyDarkSurface)
-                .border(1.dp, NavyDarkBorder)
+                .padding(horizontal = 16.dp)
                 .horizontalScroll(tabsScrollState)
                 .padding(horizontal = 14.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -331,11 +330,11 @@ fun TerminalScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             val (statusText, isSuccess) = when {
-                isInteractiveMode -> "NANO ACTIVE" to true
-                connectionState is TerminalConnectionState.Connected -> "SSH CONNECTED" to true
-                connectionState is TerminalConnectionState.Connecting -> "CONNECTING..." to false
-                connectionState is TerminalConnectionState.Error -> "CONNECTION ERROR" to false
-                else -> "STANDBY" to false
+                isInteractiveMode -> "Editor aktif" to true
+                connectionState is TerminalConnectionState.Connected -> "SSH terhubung" to true
+                connectionState is TerminalConnectionState.Connecting -> "Menghubungkan…" to false
+                connectionState is TerminalConnectionState.Error -> "Koneksi gagal" to false
+                else -> "Siap terhubung" to false
             }
             StatusBadge(text = statusText, isSuccess = isSuccess)
 
@@ -349,7 +348,7 @@ fun TerminalScreen(
                 )
             } else if (!serverConfig.isSshConfigured && connectionState !is TerminalConnectionState.Connected) {
                 Text(
-                    text = "Tip: Tap 'Sandbox' to test CLI",
+                    text = "Coba terminal dengan Sandbox",
                     color = TextSecondary,
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace
@@ -364,13 +363,15 @@ fun TerminalScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .background(Color(0xFF0A0A0A))
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xFF152033))
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(verticalScrollState)
-                    .padding(4.dp)
+                    .padding(14.dp)
             ) {
                 SelectionContainer {
                     Text(
@@ -378,7 +379,7 @@ fun TerminalScreen(
                         fontFamily = FontFamily.Monospace,
                         fontSize = 13.sp,
                         lineHeight = 20.sp,
-                        color = Color(0xFFA8D08D),
+                        color = Color(0xFFE2E8F0),
                         softWrap = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -450,12 +451,12 @@ fun TerminalScreen(
             for (snip in snippets) {
                 Row(
                     modifier = Modifier
-                        .height(36.dp)
+                        .height(48.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(if (snip.isDefault) Color(0xFF1E2636) else BurntOrangeBadgeBg.copy(alpha = 0.5f))
+                        .background(if (snip.isDefault) NavyDarkCard else BurntOrangeBadgeBg)
                         .border(
                             width = 1.dp,
-                            color = if (snip.isDefault) Color(0xFF2D394E) else BurntOrangeBorder,
+                            color = if (snip.isDefault) NavyDarkBorder else BurntOrangeBorder,
                             shape = RoundedCornerShape(8.dp)
                         )
                         .combinedClickable(
@@ -492,7 +493,7 @@ fun TerminalScreen(
             // "+ Tambah" Action Button for Custom Snippet
             Row(
                 modifier = Modifier
-                    .height(36.dp)
+                    .height(48.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(BurntOrangePillBg)
                     .border(1.dp, BurntOrangeBorder, RoundedCornerShape(8.dp))
@@ -655,7 +656,7 @@ fun TerminalScreen(
                 },
                 enabled = true,
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .background(BurntOrange)
                     .testTag("send_command_button")
@@ -663,7 +664,7 @@ fun TerminalScreen(
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Send,
                     contentDescription = if (inputCommand.isNotBlank()) "Send" else "Enter",
-                    tint = NavyDarkBackground,
+                    tint = Color.White,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -776,7 +777,7 @@ fun TerminalScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                 ) {
-                    Text("Simpan", color = NavyDarkBackground, fontWeight = FontWeight.Bold)
+                    Text("Simpan", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -812,9 +813,9 @@ fun TerminalScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = BurntOrange),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = NavyDarkBackground, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Jalankan Sekarang", color = NavyDarkBackground, fontWeight = FontWeight.Bold)
+                        Text("Jalankan Sekarang", color = Color.White, fontWeight = FontWeight.Bold)
                     }
 
                     Button(

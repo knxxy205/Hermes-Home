@@ -55,6 +55,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material3.Surface
+import androidx.activity.SystemBarStyle
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -94,14 +100,17 @@ import kotlinx.coroutines.launch
 enum class AppTab(val title: String, val icon: ImageVector, val tag: String) {
     TERMINAL("Terminal", Icons.Default.Terminal, "tab_terminal"),
     FILES("Files", Icons.Default.FolderOpen, "tab_files"),
-    HERMES("Hermes", Icons.Default.SmartToy, "tab_hermes"),
+    HERMES("Hermes", Icons.Default.Forum, "tab_hermes"),
     SETTINGS("Settings", Icons.Default.Settings, "tab_settings")
 }
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+        )
 
         // Schedule periodic 1-hour background server health check
         ServerHealthWorker.schedulePeriodicCheck(applicationContext)
@@ -188,9 +197,9 @@ fun VaultLockScreen(
             Box(
                 modifier = Modifier
                     .size(96.dp)
-                    .clip(CircleShape)
+                    .clip(RoundedCornerShape(32.dp))
                     .background(BurntOrangeBadgeBg)
-                    .border(2.dp, BurntOrange, CircleShape),
+                    .border(1.dp, BurntOrangeBorder, RoundedCornerShape(32.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -204,17 +213,17 @@ fun VaultLockScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "Hermes Vault",
+                text = "Homeserver Remote",
                 color = TextPrimary,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = 0.5.sp
+                letterSpacing = (-0.7).sp
             )
 
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Autentikasi biometrik atau PIN/Pola perangkat diperlukan untuk mengakses terminal SSH dan kunci server.",
+                text = "Server pribadi, dalam genggaman. Buka dengan sidik jari atau PIN perangkat untuk melanjutkan.",
                 color = TextSecondary,
                 fontSize = 13.sp,
                 lineHeight = 19.sp,
@@ -241,7 +250,7 @@ fun VaultLockScreen(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = if (serverConfig.isSshConfigured) "Node: ${serverConfig.sshHost}" else "Node: Tailscale Encrypted",
+                    text = if (serverConfig.isSshConfigured) serverConfig.sshHost else "Koneksi privat melalui Tailscale",
                     color = TextPrimary,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace
@@ -259,18 +268,18 @@ fun VaultLockScreen(
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = BurntOrange,
-                    contentColor = NavyDarkBackground
+                    contentColor = Color.White
                 )
             ) {
                 Icon(
                     imageVector = Icons.Default.Lock,
                     contentDescription = null,
-                    tint = NavyDarkBackground,
+                    tint = Color.White,
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Buka Vault (Biometrik / PIN)",
+                    text = "Buka homeserver",
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )
@@ -340,7 +349,7 @@ fun MainContentScreen() {
     }
 
     Scaffold(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().imePadding(),
         containerColor = NavyDarkBackground,
         contentWindowInsets = WindowInsets.statusBars,
         bottomBar = {
@@ -441,57 +450,34 @@ fun TailHarnessBottomNav(
     onTabSelected: (AppTab) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    Surface(
         modifier = modifier
             .fillMaxWidth()
-            .background(NavyDarkSurface)
-            .border(1.dp, NavyDarkBorder)
-            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .navigationBarsPadding(),
+        shape = RoundedCornerShape(26.dp),
+        color = Color.White,
+        shadowElevation = 6.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, NavyDarkBorder)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 6.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically
         ) {
             for (tab in AppTab.values()) {
                 val isSelected = tab == selectedTab
 
-                if (isSelected) {
-                    // Active tab: dimmed orange capsule/pill highlight behind icon + label
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(BurntOrangePillBg)
-                            .border(1.dp, BurntOrangeBorder, RoundedCornerShape(50))
-                            .clickable { onTabSelected(tab) }
-                            .padding(horizontal = 14.dp, vertical = 8.dp)
-                            .testTag(tab.tag),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = tab.icon,
-                            contentDescription = tab.title,
-                            tint = BurntOrange,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = tab.title,
-                            color = BurntOrange,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
-                    }
-                } else {
-                    // Inactive tab
                     Column(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
+                            .weight(1f)
+                            .heightIn(min = 56.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(if (isSelected) BurntOrange else Color.Transparent)
                             .clickable { onTabSelected(tab) }
-                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                            .padding(vertical = 8.dp)
                             .testTag(tab.tag),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
@@ -499,18 +485,17 @@ fun TailHarnessBottomNav(
                         Icon(
                             imageVector = tab.icon,
                             contentDescription = tab.title,
-                            tint = TextSecondary,
-                            modifier = Modifier.size(20.dp)
+                            tint = if (isSelected) Color.White else TextSecondary,
+                            modifier = Modifier.size(22.dp)
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = tab.title,
-                            color = TextSecondary,
+                            color = if (isSelected) Color.White else TextSecondary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium
                         )
                     }
-                }
             }
         }
     }

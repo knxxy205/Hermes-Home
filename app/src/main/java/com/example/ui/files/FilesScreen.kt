@@ -64,6 +64,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.heightIn
+import com.example.ui.theme.FolderBlue
+import com.example.ui.theme.FolderPeach
+import com.example.ui.theme.FolderRose
+import com.example.ui.theme.FolderMint
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -191,12 +199,12 @@ fun FilesScreen(
             CustomScreenHeader(
                 icon = Icons.Default.FolderOpen,
                 title = "Files",
-                subtitle = if (serverConfig.isSshConfigured) "SFTP Browser (${serverConfig.sshHost})" else "SFTP Sandbox Browser",
+                subtitle = if (serverConfig.isSshConfigured) serverConfig.sshHost else "Jelajahi file · Sandbox",
                 trailingContent = {
                     Row {
                         IconButton(
                             onClick = launchFilePicker,
-                            modifier = Modifier.testTag("upload_file_button")
+                            modifier = Modifier.size(48.dp).testTag("upload_file_button")
                         ) {
                             Icon(
                                 Icons.Default.FileUpload,
@@ -206,7 +214,7 @@ fun FilesScreen(
                         }
                         IconButton(
                             onClick = { showNewFolderDialog = true },
-                            modifier = Modifier.testTag("new_folder_button")
+                            modifier = Modifier.size(48.dp).testTag("new_folder_button")
                         ) {
                             Icon(
                                 Icons.Default.CreateNewFolder,
@@ -216,7 +224,7 @@ fun FilesScreen(
                         }
                         IconButton(
                             onClick = { showNewFileDialog = true },
-                            modifier = Modifier.testTag("new_file_button")
+                            modifier = Modifier.size(48.dp).testTag("new_file_button")
                         ) {
                             Icon(
                                 Icons.Default.NoteAdd,
@@ -281,7 +289,7 @@ fun FilesScreen(
                     Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(18.dp))
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(50),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedContainerColor = NavyDarkCard,
                     unfocusedContainerColor = NavyDarkCard,
@@ -293,7 +301,7 @@ fun FilesScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .height(50.dp)
+                    .heightIn(min = 56.dp)
             )
 
             // Upload in progress banner
@@ -372,7 +380,7 @@ fun FilesScreen(
                                 onClick = { viewModel.loadFiles(config = serverConfig) },
                                 colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                             ) {
-                                Text("Coba Lagi", color = NavyDarkBackground)
+                                Text("Coba Lagi", color = Color.White)
                             }
                         }
                     }
@@ -397,10 +405,39 @@ fun FilesScreen(
                     else -> {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 96.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            items(filteredList, key = { it.path }) { item ->
+                            val folders = filteredList.filter { it.isDirectory }
+                            val files = filteredList.filterNot { it.isDirectory }
+                            if (folders.isNotEmpty()) {
+                                item {
+                                    Text("Folders", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                                }
+                                items(folders.chunked(2), key = { "folders_${it.first().path}" }) { pair ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        pair.forEach { folder ->
+                                            Box(Modifier.weight(1f)) {
+                                                FileItemCard(
+                                                    item = folder,
+                                                    onOpen = { viewModel.navigateTo(folder.path, serverConfig) },
+                                                    onRename = { itemToRename = folder; renameNewName = folder.name },
+                                                    onDelete = { itemToDelete = folder },
+                                                    onDownload = {}
+                                                )
+                                            }
+                                        }
+                                        if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                            if (files.isNotEmpty()) {
+                                item {
+                                    Text("Files", style = MaterialTheme.typography.titleMedium, color = TextPrimary,
+                                        modifier = Modifier.padding(top = 8.dp))
+                                }
+                            }
+                            items(files, key = { it.path }) { item ->
                                 FileItemCard(
                                     item = item,
                                     onOpen = {
@@ -433,7 +470,7 @@ fun FilesScreen(
         FloatingActionButton(
             onClick = launchFilePicker,
             containerColor = BurntOrange,
-            contentColor = NavyDarkBackground,
+            contentColor = Color.White,
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -491,7 +528,7 @@ fun FilesScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                 ) {
-                    Text("Buat", color = NavyDarkBackground, fontWeight = FontWeight.Bold)
+                    Text("Buat", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -550,7 +587,7 @@ fun FilesScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                 ) {
-                    Text("Simpan", color = NavyDarkBackground, fontWeight = FontWeight.Bold)
+                    Text("Simpan", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -592,7 +629,7 @@ fun FilesScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                 ) {
-                    Text("Simpan", color = NavyDarkBackground, fontWeight = FontWeight.Bold)
+                    Text("Simpan", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -622,7 +659,7 @@ fun FilesScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = TerminalRed)
                 ) {
-                    Text("Hapus", color = NavyDarkBackground, fontWeight = FontWeight.Bold)
+                    Text("Hapus", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -690,7 +727,7 @@ fun FilesScreen(
                         onClick = { viewModel.setViewingFile(null) },
                         colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                     ) {
-                        Text("Tutup", color = NavyDarkBackground, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("Tutup", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
             }
@@ -717,6 +754,41 @@ fun FileItemCard(
 
     val iconTint = if (item.isDirectory) BurntOrange else TerminalCyan
 
+    if (item.isDirectory) {
+        val palette = listOf(
+            FolderBlue to Color(0xFF2879C9), FolderPeach to Color(0xFFAD711B),
+            FolderRose to Color(0xFFBE4568), FolderMint to Color(0xFF278D80)
+        )
+        val (tint, accent) = palette[Math.floorMod(item.name.hashCode(), palette.size)]
+        Surface(
+            onClick = onOpen,
+            shape = RoundedCornerShape(22.dp),
+            color = tint,
+            modifier = Modifier.fillMaxWidth().testTag("file_item_${item.name}")
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Icon(Icons.Default.Folder, null, tint = accent, modifier = Modifier.size(32.dp))
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(48.dp)) {
+                            Icon(Icons.Default.MoreVert, "Tindakan folder", tint = accent)
+                        }
+                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                            DropdownMenuItem(text = { Text("Ganti nama") }, onClick = { menuExpanded = false; onRename() })
+                            DropdownMenuItem(text = { Text("Hapus", color = TerminalRed) }, onClick = { menuExpanded = false; onDelete() })
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(item.name, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Folder", color = accent, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+            }
+        }
+        return
+    }
+
     TailHarnessCard(
         modifier = Modifier.testTag("file_item_${item.name}"),
         onClick = onOpen,
@@ -734,7 +806,7 @@ fun FileItemCard(
                 modifier = Modifier
                     .size(42.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(if (item.isDirectory) BurntOrangeBadgeBg else NavyDarkSurface)
+                    .background(BurntOrangeBadgeBg)
                     .border(
                         1.dp,
                         if (item.isDirectory) BurntOrangeBorder else NavyDarkBorder,
@@ -762,34 +834,21 @@ fun FileItemCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = item.formattedSize,
-                        color = BurntOrange,
-                        fontSize = 11.sp,
+                        color = TextSecondary,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    Text(
-                        text = " • ",
-                        color = TextSecondary,
-                        fontSize = 11.sp
-                    )
-                    Text(
-                        text = item.permissions,
-                        color = TextSecondary,
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
                     if (item.formattedDate != "-") {
-                        Text(
-                            text = " • ",
-                            color = TextSecondary,
-                            fontSize = 11.sp
-                        )
+                        Text(" · ", color = TextSecondary, fontSize = 12.sp)
                         Text(
                             text = item.formattedDate,
                             color = TextSecondary,
-                            fontSize = 10.sp
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
