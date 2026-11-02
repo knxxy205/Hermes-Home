@@ -77,7 +77,14 @@ jobs:
           echo "Temporary debug keystore verified."
 
       - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          DEBUG_KEYSTORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
+          DEBUG_KEYSTORE_PATH: ${{ runner.temp }}/homeserver.jks
+        run: |
+          test -n "$DEBUG_KEYSTORE_BASE64"
+          printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 --decode > "$DEBUG_KEYSTORE_PATH"
+          gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace --no-daemon
 
       - name: Verify debug APK
         run: |
@@ -198,7 +205,7 @@ jobs:
           - **Run Attempt**: #${GITHUB_RUN_ATTEMPT}
           - **Source Commit SHA**: ${GITHUB_SHA}
           - **Type**: Debug APK intended for testing and development
-          - **Signature**: Signed with a temporary debug keystore
+          - **Signature**: Signed with the persistent Homeserver Remote testing key
           - **Notice**: This is not a Play Store production release.
           EOF
           )

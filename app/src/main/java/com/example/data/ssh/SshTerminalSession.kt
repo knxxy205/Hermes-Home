@@ -17,6 +17,9 @@ import kotlinx.coroutines.withContext
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
+import java.io.InputStreamReader
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 
 class SshTerminalSession(
     val id: String = UUID.randomUUID().toString(),
@@ -39,6 +42,40 @@ class SshTerminalSession(
     val connectionState: StateFlow<TerminalConnectionState> = _connectionState.asStateFlow()
 
     private val terminalBuffer = TerminalScreenBuffer(maxCols = 80, maxRows = 24)
+    private var columns = 80
+    private var rows = 24
+    private val pendingInput = Channel<ByteArray>(Channel.UNLIMITED)
+    private val inputJob = coroutineScope.launch(Dispatchers.IO) {
+        for (bytes in pendingInput) {
+            try {
+                outputStream?.let { out -> out.write(bytes); out.flush() }
+            } catch (_: Exception) { }
+        }
+    }
+    private val pendingOutput = Channel<String>(64)
+    private val outputJob by lazy { coroutineScope.launch(Dispatchers.Default) {
+        for (first in pendingOutput) {
+            delay(16)
+            val batch = StringBuilder(first)
+            while (true) batch.append(pendingOutput.tryReceive().getOrNull() ?: break)
+            val text = batch.toString()
+            terminalBuffer.process(text)
+            _terminalOutput.value = (_terminalOutput.value + text).takeLast(30000)
+            _isInteractiveMode.value = terminalBuffer.isInteractive()
+            _terminalAnnotatedOutput.value = terminalBuffer.render()
+        }
+    } }
+
+    fun resize(columns: Int, rows: Int) {
+        val cols = columns.coerceIn(20, 240)
+        val lines = rows.coerceIn(4, 120)
+        if (cols == this.columns && lines == this.rows) return
+        this.columns = cols
+        this.rows = lines
+        terminalBuffer.resize(cols, lines)
+        channel?.setPtySize(cols, lines, 0, 0)
+        _terminalAnnotatedOutput.value = terminalBuffer.render()
+    }
 
     private val _isInteractiveMode = MutableStateFlow(false)
     val isInteractiveMode: StateFlow<Boolean> = _isInteractiveMode.asStateFlow()
@@ -56,6 +93,7 @@ class SshTerminalSession(
     private var isSandboxNano = false
 
     init {
+        outputJob.start()
         terminalBuffer.onInteractiveModeChanged = { interactive ->
             _isInteractiveMode.value = interactive
         }
@@ -85,9 +123,11 @@ class SshTerminalSession(
                 isSandboxMode = false
 
                 val jsch = JSch()
+                val trust = com.example.data.security.SshTrust.configure(jsch)
                 val newSession = jsch.getSession(config.sshUser, config.sshHost, config.sshPort)
                 newSession.setPassword(config.sshPassword)
-                newSession.setConfig("StrictHostKeyChecking", "no")
+                newSession.userInfo = trust
+                newSession.setConfig("StrictHostKeyChecking", "ask")
                 newSession.setConfig("PreferredAuthentications", "password,keyboard-interactive")
                 newSession.setConfig("TCPKeepAlive", "yes")
                 newSession.serverAliveInterval = 10000 // Send keep-alive every 10 seconds
@@ -96,7 +136,7 @@ class SshTerminalSession(
                 newSession.connect(15000)
 
                 val newChannel = newSession.openChannel("shell") as ChannelShell
-                newChannel.setPtyType("xterm-256color", 80, 24, 640, 480)
+                newChannel.setPtyType("xterm-256color", columns, rows, 0, 0)
                 newChannel.connect(10000)
 
                 session = newSession
@@ -124,16 +164,14 @@ class SshTerminalSession(
     private fun startReading(inputStream: InputStream) {
         readJob?.cancel()
         readJob = coroutineScope.launch(Dispatchers.IO) {
-            val buffer = ByteArray(4096)
+            val reader = InputStreamReader(inputStream, Charsets.UTF_8)
+            val buffer = CharArray(4096)
             try {
                 while (isActive) {
-                    val read = inputStream.read(buffer)
+                    val read = reader.read(buffer)
                     if (read == -1) break
                     if (read > 0) {
-                        val text = String(buffer, 0, read, Charsets.UTF_8)
-                        withContext(Dispatchers.Main) {
-                            appendOutput(text)
-                        }
+                        pendingOutput.send(String(buffer, 0, read))
                     }
                 }
             } catch (e: Exception) {
@@ -179,17 +217,7 @@ class SshTerminalSession(
 
         val out = outputStream
         if (out != null && channel?.isConnected == true) {
-            coroutineScope.launch(Dispatchers.IO) {
-                try {
-                    // Send carriage return (\r) - standard Enter in terminal PTY
-                    out.write((command + "\r").toByteArray(Charsets.UTF_8))
-                    out.flush()
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        appendOutput("\n\u001B[31m[SEND FAILED] ${e.localizedMessage}\u001B[0m\n")
-                    }
-                }
-            }
+            pendingInput.trySend((command + "\r").toByteArray(Charsets.UTF_8))
         } else {
             appendOutput("\n\u001B[31m[ERROR] Not connected. Connect SSH first.\u001B[0m\n")
         }
@@ -224,12 +252,7 @@ class SshTerminalSession(
 
         val out = outputStream
         if (out != null && channel?.isConnected == true) {
-            coroutineScope.launch(Dispatchers.IO) {
-                try {
-                    out.write(bytes)
-                    out.flush()
-                } catch (_: Exception) {}
-            }
+            pendingInput.trySend(bytes)
         }
     }
 
@@ -261,18 +284,7 @@ class SshTerminalSession(
     }
 
     private fun appendOutput(newText: String) {
-        val current = _terminalOutput.value
-        val updated = if (current.length > 50000) {
-            current.takeLast(30000) + newText
-        } else {
-            current + newText
-        }
-        _terminalOutput.value = updated
-
-        // Process in virtual terminal buffer
-        terminalBuffer.process(newText)
-        _isInteractiveMode.value = terminalBuffer.isInteractive()
-        _terminalAnnotatedOutput.value = terminalBuffer.render()
+        pendingOutput.trySend(newText)
     }
 
     private fun handleSandboxCommand(cmd: String) {
@@ -378,5 +390,9 @@ class SshTerminalSession(
 
     fun destroy() {
         disconnectInternal()
+        pendingOutput.close()
+        outputJob.cancel()
+        pendingInput.close()
+        inputJob.cancel()
     }
 }

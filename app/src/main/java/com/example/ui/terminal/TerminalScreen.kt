@@ -9,6 +9,9 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -64,6 +67,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -94,6 +103,7 @@ import com.example.ui.theme.TerminalGreen
 import com.example.ui.theme.TerminalRed
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.TerminalFont
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -113,10 +123,18 @@ fun TerminalScreen(
     val connectionState by activeSession.connectionState.collectAsState()
     val terminalAnnotatedOutput by activeSession.terminalAnnotatedOutput.collectAsState()
     val isInteractiveMode by activeSession.isInteractiveMode.collectAsState()
+    val density = LocalDensity.current
+    val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
+    val textMeasurer = rememberTextMeasurer()
+    val inputFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val cellSize = remember(density) {
+        textMeasurer.measure("MMMMMMMMMM", TextStyle(fontFamily = TerminalFont, fontSize = 13.sp, lineHeight = 20.sp)).size
+    }
 
     var inputCommand by remember { mutableStateOf("") }
+    val liveInput = connectionState is TerminalConnectionState.Connected && serverConfig.isSshConfigured
     var isCtrlActive by remember { mutableStateOf(false) }
-    var isWordWrapEnabled by remember { mutableStateOf(true) }
 
     // Custom snippets state
     var snippets by remember {
@@ -138,7 +156,9 @@ fun TerminalScreen(
 
     // Auto-scroll to bottom of active session output
     LaunchedEffect(terminalAnnotatedOutput) {
-        verticalScrollState.scrollTo(verticalScrollState.maxValue)
+        if (verticalScrollState.maxValue - verticalScrollState.value < 160) {
+            verticalScrollState.scrollTo(verticalScrollState.maxValue)
+        }
     }
 
     val hostSubtitle = when (val state = connectionState) {
@@ -156,7 +176,7 @@ fun TerminalScreen(
             .background(NavyDarkBackground)
     ) {
         // Custom Header with Badge Icon
-        CustomScreenHeader(
+        if (!keyboardVisible) CustomScreenHeader(
             icon = Icons.Default.Terminal,
             title = "Terminal",
             subtitle = hostSubtitle,
@@ -222,7 +242,7 @@ fun TerminalScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
                 .horizontalScroll(tabsScrollState)
-                .padding(horizontal = 14.dp, vertical = 6.dp),
+                .padding(horizontal = 14.dp, vertical = if (keyboardVisible) 2.dp else 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -322,7 +342,7 @@ fun TerminalScreen(
         }
 
         // Status badge row
-        Row(
+        if (!keyboardVisible) Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 4.dp),
@@ -359,29 +379,37 @@ fun TerminalScreen(
         Spacer(modifier = Modifier.height(2.dp))
 
         // Main Terminal Output Window (Termius Dark #0A0A0A canvas - Full-width edge-to-edge)
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .clip(RoundedCornerShape(24.dp))
-                .background(Color(0xFF152033))
+                .background(Color(0xFF141729))
+                .clickable { inputFocus.requestFocus(); keyboard?.show() }
         ) {
+            val columns = (((constraints.maxWidth - with(density) { 28.dp.roundToPx() }) * 10) / cellSize.width).coerceAtLeast(20)
+            // Keep row count stable during keyboard animation. Resize once it settles.
+            LaunchedEffect(activeSession, columns, keyboardVisible) {
+                kotlinx.coroutines.delay(250)
+                val lines = ((constraints.maxHeight - with(density) { 28.dp.roundToPx() }) / cellSize.height).coerceAtLeast(4)
+                activeSession.resize(columns, lines)
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(verticalScrollState)
+                    .horizontalScroll(terminalHorizontalScrollState)
                     .padding(14.dp)
             ) {
                 SelectionContainer {
                     Text(
                         text = terminalAnnotatedOutput,
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = TerminalFont,
                         fontSize = 13.sp,
                         lineHeight = 20.sp,
                         color = Color(0xFFE2E8F0),
-                        softWrap = true,
-                        modifier = Modifier.fillMaxWidth()
+                        softWrap = false
                     )
                 }
             }
@@ -448,7 +476,7 @@ fun TerminalScreen(
             ShortcutKeyButton(label = "CLEAR", onClick = { activeSession.clearBuffer() })
 
             // Snippet Buttons (Sys Info, df -h, etc.)
-            for (snip in snippets) {
+            if (!keyboardVisible) for (snip in snippets) {
                 Row(
                     modifier = Modifier
                         .height(48.dp)
@@ -491,7 +519,7 @@ fun TerminalScreen(
             }
 
             // "+ Tambah" Action Button for Custom Snippet
-            Row(
+            if (!keyboardVisible) Row(
                 modifier = Modifier
                     .height(48.dp)
                     .clip(RoundedCornerShape(8.dp))
@@ -555,10 +583,10 @@ fun TerminalScreen(
                 Spacer(modifier = Modifier.width(6.dp))
 
                 BasicTextField(
-                    value = inputCommand,
+                    value = if (liveInput) "\u200B" else inputCommand,
                     onValueChange = { newVal ->
                         if (isCtrlActive && newVal.length > inputCommand.length) {
-                            val newChar = newVal.last()
+                            val newChar = newVal.replace("\u200B", "").lastOrNull() ?: return@BasicTextField
                             if (newChar.isLetter()) {
                                 activeSession.sendKeyCtrl(newChar)
                                 Toast.makeText(context, "Ctrl+${newChar.uppercaseChar()} dikirim", Toast.LENGTH_SHORT).show()
@@ -566,10 +594,17 @@ fun TerminalScreen(
                                 return@BasicTextField
                             }
                         }
-                        inputCommand = newVal
+                        if (liveInput) {
+                            val inserted = newVal.replace("\u200B", "")
+                            if (inserted.isNotEmpty()) activeSession.sendRawBytes(inserted.toByteArray(Charsets.UTF_8))
+                            else if (newVal.isEmpty()) activeSession.sendRawBytes(byteArrayOf(0x7f))
+                        } else {
+                            inputCommand = newVal
+                        }
                     },
                     modifier = Modifier
                         .weight(1f)
+                        .focusRequester(inputFocus)
                         .testTag("command_input_field"),
                     textStyle = androidx.compose.ui.text.TextStyle(
                         color = TextPrimary,
@@ -578,11 +613,16 @@ fun TerminalScreen(
                     ),
                     cursorBrush = SolidColor(BurntOrange),
                     maxLines = 5,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardOptions = KeyboardOptions(
+                        imeAction = ImeAction.Send,
+                        autoCorrectEnabled = false,
+                        capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None
+                    ),
                     keyboardActions = KeyboardActions(
                         onSend = {
                             if (inputCommand.isNotBlank()) {
-                                activeSession.sendCommand(inputCommand)
+                                if (serverConfig.isSshConfigured) activeSession.sendKeyEnter()
+                                else activeSession.sendCommand(inputCommand)
                                 inputCommand = ""
                             } else {
                                 activeSession.sendKeyEnter()
@@ -592,7 +632,7 @@ fun TerminalScreen(
                     decorationBox = { innerTextField ->
                         if (inputCommand.isEmpty()) {
                             Text(
-                                text = if (isCtrlActive) "Ketik huruf untuk Ctrl+... (o=Simpan, x=Keluar)" else "Ketik perintah...",
+                                text = if (isCtrlActive) "Ctrl + huruf…" else if (liveInput) "Ketik langsung ke terminal…" else "Ketik perintah…",
                                 color = if (isCtrlActive) BurntOrange.copy(alpha = 0.8f) else TextSecondary.copy(alpha = 0.55f),
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 13.sp
@@ -608,7 +648,8 @@ fun TerminalScreen(
                         onClick = {
                             val clipText = clipboardManager.getText()?.text
                             if (!clipText.isNullOrBlank()) {
-                                inputCommand = clipText
+                                if (liveInput) activeSession.sendRawBytes(clipText.toByteArray(Charsets.UTF_8))
+                                else inputCommand = clipText
                                 Toast.makeText(context, "Ditempel dari clipboard", Toast.LENGTH_SHORT).show()
                             } else {
                                 Toast.makeText(context, "Clipboard kosong", Toast.LENGTH_SHORT).show()
@@ -628,7 +669,10 @@ fun TerminalScreen(
                 } else {
                     // Clean Clear button if text entered
                     IconButton(
-                        onClick = { inputCommand = "" },
+                        onClick = {
+                            if (serverConfig.isSshConfigured) activeSession.sendRawBytes("\u0015".toByteArray())
+                            inputCommand = ""
+                        },
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
@@ -647,7 +691,8 @@ fun TerminalScreen(
             IconButton(
                 onClick = {
                     if (inputCommand.isNotBlank()) {
-                        activeSession.sendCommand(inputCommand)
+                        if (serverConfig.isSshConfigured) activeSession.sendKeyEnter()
+                        else activeSession.sendCommand(inputCommand)
                         inputCommand = ""
                     } else {
                         activeSession.sendKeyEnter()

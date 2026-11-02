@@ -44,6 +44,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -54,7 +58,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.heightIn
@@ -69,7 +72,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
+import androidx.compose.ui.layout.layout
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.layout.ime
+import androidx.compose.ui.platform.LocalDensity
 import com.example.data.hermes.ChatMessage
 import com.example.data.hermes.HermesApiClient
 import com.example.data.security.BiometricAuthHelper
@@ -107,6 +114,8 @@ enum class AppTab(val title: String, val icon: ImageVector, val tag: String) {
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.example.data.security.SshTrust.initialize(applicationContext)
+        if (android.os.Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
@@ -129,6 +138,17 @@ fun TailHarnessApp(activity: FragmentActivity? = null) {
     val coroutineScope = rememberCoroutineScope()
 
     var isVaultUnlocked by remember { mutableStateOf(false) }
+    var backgroundAt by remember { mutableStateOf(0L) }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) backgroundAt = android.os.SystemClock.elapsedRealtime()
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START && backgroundAt > 0L &&
+                android.os.SystemClock.elapsedRealtime() - backgroundAt >= 60_000L) isVaultUnlocked = false
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // Auto-prompt biometric authentication on startup if activity is present
     LaunchedEffect(activity) {
@@ -212,13 +232,16 @@ fun VaultLockScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            Text(
-                text = "Homeserver Remote",
-                color = TextPrimary,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = (-0.7).sp
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(76.dp).clip(RoundedCornerShape(20.dp)).background(BurntOrange)) {
+                    Image(painterResource(R.drawable.homeserver_mark), "Homeserver Remote", Modifier.fillMaxSize())
+                }
+                Spacer(Modifier.width(16.dp))
+                Column {
+                    Text("Homeserver", color = TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp)
+                    Text("Remote", color = BurntOrange, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp)
+                }
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -290,6 +313,16 @@ fun VaultLockScreen(
 
 @Composable
 fun MainContentScreen() {
+    val trustRequest by com.example.data.security.SshTrust.pending.collectAsState()
+    trustRequest?.let { request ->
+        AlertDialog(
+            onDismissRequest = { request.answer.complete(false) },
+            title = { Text("Verifikasi identitas server") },
+            text = { Text(request.message + "\n\nCocokkan fingerprint ini dengan server kamu sebelum mempercayainya.") },
+            confirmButton = { TextButton(onClick = { request.answer.complete(true) }) { Text("Percayai server") } },
+            dismissButton = { TextButton(onClick = { request.answer.complete(false) }) { Text("Batal") } }
+        )
+    }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
@@ -297,11 +330,15 @@ fun MainContentScreen() {
     var serverConfig by remember { mutableStateOf(encryptedStorage.loadConfig()) }
 
     val terminalManager = remember { SshTerminalManager(coroutineScope) }
+    DisposableEffect(terminalManager) {
+        onDispose { terminalManager.sessions.value.forEach { it.destroy() } }
+    }
     val sftpManager = remember { SftpManager() }
     val hermesClient = remember { HermesApiClient() }
     val hermesMessages = remember { mutableStateListOf<ChatMessage>() }
 
     var selectedTab by remember { mutableStateOf(AppTab.TERMINAL) }
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
 
     // Cross-Integration Handler: Execute CLI command from Hermes directly in Terminal
     val handleExecuteInTerminal: (String) -> Unit = { command ->
@@ -353,7 +390,7 @@ fun MainContentScreen() {
         containerColor = NavyDarkBackground,
         contentWindowInsets = WindowInsets.statusBars,
         bottomBar = {
-            TailHarnessBottomNav(
+            if (!keyboardVisible) TailHarnessBottomNav(
                 selectedTab = selectedTab,
                 onTabSelected = { selectedTab = it }
             )
@@ -368,11 +405,7 @@ fun MainContentScreen() {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .zIndex(if (selectedTab == AppTab.TERMINAL) 1f else 0f)
-                    .graphicsLayer {
-                        alpha = if (selectedTab == AppTab.TERMINAL) 1f else 0f
-                        translationY = if (selectedTab == AppTab.TERMINAL) 0f else 99999f
-                    }
+                    .activeScreen(selectedTab == AppTab.TERMINAL)
             ) {
                 TerminalScreen(
                     terminalManager = terminalManager,
@@ -385,11 +418,7 @@ fun MainContentScreen() {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .zIndex(if (selectedTab == AppTab.FILES) 1f else 0f)
-                    .graphicsLayer {
-                        alpha = if (selectedTab == AppTab.FILES) 1f else 0f
-                        translationY = if (selectedTab == AppTab.FILES) 0f else 99999f
-                    }
+                    .activeScreen(selectedTab == AppTab.FILES)
             ) {
                 FilesScreen(
                     sftpManager = sftpManager,
@@ -403,11 +432,7 @@ fun MainContentScreen() {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .zIndex(if (selectedTab == AppTab.HERMES) 1f else 0f)
-                    .graphicsLayer {
-                        alpha = if (selectedTab == AppTab.HERMES) 1f else 0f
-                        translationY = if (selectedTab == AppTab.HERMES) 0f else 99999f
-                    }
+                    .activeScreen(selectedTab == AppTab.HERMES)
             ) {
                 HermesChatScreen(
                     hermesClient = hermesClient,
@@ -426,11 +451,7 @@ fun MainContentScreen() {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .zIndex(if (selectedTab == AppTab.SETTINGS) 1f else 0f)
-                    .graphicsLayer {
-                        alpha = if (selectedTab == AppTab.SETTINGS) 1f else 0f
-                        translationY = if (selectedTab == AppTab.SETTINGS) 0f else 99999f
-                    }
+                    .activeScreen(selectedTab == AppTab.SETTINGS)
             ) {
                 SettingsScreen(
                     encryptedStorage = encryptedStorage,
@@ -443,6 +464,19 @@ fun MainContentScreen() {
         }
     }
 }
+
+// Preserve screen state and running requests, but never measure or place hidden screens.
+// Unlike alpha/translation, this avoids relaying out every form during IME animation.
+private fun Modifier.activeScreen(active: Boolean): Modifier = this.then(
+    Modifier.layout { measurable, constraints ->
+        if (active) {
+            val placeable = measurable.measure(constraints)
+            layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+        } else {
+            layout(0, 0) {}
+        }
+    }
+)
 
 @Composable
 fun TailHarnessBottomNav(

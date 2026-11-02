@@ -15,6 +15,7 @@ val JakartaSans = FontFamily(
     Font(R.font.jakarta_700, FontWeight.Bold),
     Font(R.font.jakarta_800, FontWeight.ExtraBold)
 )
+val TerminalFont = FontFamily(Font(R.font.jetbrains_mono))
 
 private fun uiStyle(size: Int, line: Int, weight: FontWeight = FontWeight.Normal) = TextStyle(
     fontFamily = JakartaSans,

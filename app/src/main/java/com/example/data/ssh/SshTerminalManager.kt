@@ -34,7 +34,7 @@ class SshTerminalManager(
     val activeSession: StateFlow<SshTerminalSession> = _activeSession.asStateFlow()
 
     init {
-        val firstSession = SshTerminalSession(initialTitle = "bash 1", coroutineScope = coroutineScope)
+        val firstSession = _activeSession.value
         _sessions.value = listOf(firstSession)
         _activeSession.value = firstSession
     }
@@ -169,9 +169,11 @@ class SshTerminalManager(
 
         try {
             val jsch = JSch()
+            val trust = com.example.data.security.SshTrust.configure(jsch)
             execSession = jsch.getSession(config.sshUser, config.sshHost, config.sshPort).apply {
                 setPassword(config.sshPassword)
-                setConfig("StrictHostKeyChecking", "no")
+                userInfo = trust
+                setConfig("StrictHostKeyChecking", "ask")
                 setConfig("PreferredAuthentications", "password,keyboard-interactive")
                 connect(10000)
             }
@@ -227,12 +229,7 @@ class SshTerminalManager(
             Result.success(finalOutput)
         } catch (e: Exception) {
             // If live connection fails (e.g., test environment), return informative error or sandbox fallback
-            val simulated = simulateCommandOutput(trimmedCmd)
-            if (simulated.isNotBlank()) {
-                Result.success("[Simulasi Eksekusi - ${config.sshHost}]\n$simulated")
-            } else {
-                Result.failure(Exception("Gagal eksekusi SSH di ${config.sshHost}: ${e.localizedMessage}"))
-            }
+            Result.failure(Exception("Gagal eksekusi SSH di ${config.sshHost}: ${e.localizedMessage}"))
         } finally {
             try { execChannel?.disconnect() } catch (_: Exception) {}
             try { execSession?.disconnect() } catch (_: Exception) {}

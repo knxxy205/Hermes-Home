@@ -109,9 +109,11 @@ services:
         }
 
         val jsch = JSch()
+        val trust = com.example.data.security.SshTrust.configure(jsch)
         val session = jsch.getSession(config.sshUser, config.sshHost, config.sshPort)
         session.setPassword(config.sshPassword)
-        session.setConfig("StrictHostKeyChecking", "no")
+        session.userInfo = trust
+        session.setConfig("StrictHostKeyChecking", "ask")
         session.connect(15000)
 
         val channel = session.openChannel("sftp") as ChannelSftp

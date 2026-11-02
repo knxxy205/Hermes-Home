@@ -21,8 +21,8 @@ import androidx.compose.ui.text.withStyle
  * - SGR styling (bold, colors, reverse/inverse video \u001B[7m used by nano)
  */
 class TerminalScreenBuffer(
-    val maxCols: Int = 80,
-    val maxRows: Int = 24
+    var maxCols: Int = 80,
+    var maxRows: Int = 24
 ) {
 
     data class Cell(
@@ -50,18 +50,18 @@ class TerminalScreenBuffer(
     }
 
     companion object {
-        val ColorDefaultFg = Color(0xFF39FF14) // Terminal green by default
+        val ColorDefaultFg = Color(0xFF62AE91)
         val ColorDefaultBg = Color.Transparent
         val ColorInverseBg = Color(0xFFCBD5E1) // Light gray bg for nano title & shortcuts
         val ColorInverseFg = Color(0xFF05080E) // Dark text for inverse video
 
         val ColorBlack = Color(0xFF1E293B)
-        val ColorRed = Color(0xFFFF5964)
-        val ColorGreen = Color(0xFF39FF14)
-        val ColorYellow = Color(0xFFFFD166)
-        val ColorBlue = Color(0xFF60A5FA)
-        val ColorMagenta = Color(0xFFE879F9)
-        val ColorCyan = Color(0xFF00F0FF)
+        val ColorRed = Color(0xFFD77B87)
+        val ColorGreen = Color(0xFF62AE91)
+        val ColorYellow = Color(0xFFD8B77A)
+        val ColorBlue = Color(0xFF75A7D1)
+        val ColorMagenta = Color(0xFFB49AC9)
+        val ColorCyan = Color(0xFF7FB5BC)
         val ColorWhite = Color(0xFFEDEDED)
         val ColorGray = Color(0xFF94A3B8)
     }
@@ -74,8 +74,29 @@ class TerminalScreenBuffer(
     private val maxScrollbackLines = 600
 
     // Grids for normal and alt screen
-    private val normalGrid = Array(maxRows) { Array(maxCols) { Cell() } }
-    private val altGrid = Array(maxRows) { Array(maxCols) { Cell() } }
+    private var normalGrid = Array(maxRows) { Array(maxCols) { Cell() } }
+    private var altGrid = Array(maxRows) { Array(maxCols) { Cell() } }
+
+    @Synchronized
+    fun resize(columns: Int, rows: Int) {
+        if (columns == maxCols && rows == maxRows) return
+        val offset = (cursorRow - rows + 1).coerceAtLeast(0)
+        if (!isAltScreen) {
+            for (r in 0 until offset) scrollback.add(rowToAnnotatedString(normalGrid[r]))
+            while (scrollback.size > maxScrollbackLines) scrollback.removeAt(0)
+        }
+        fun resized(old: Array<Array<Cell>>) = Array(rows) { r ->
+            Array(columns) { c -> old.getOrNull(r + offset)?.getOrNull(c)?.copy() ?: Cell() }
+        }
+        normalGrid = resized(normalGrid)
+        altGrid = resized(altGrid)
+        maxCols = columns
+        maxRows = rows
+        cursorRow = (cursorRow - offset).coerceIn(0, rows - 1)
+        cursorCol = cursorCol.coerceIn(0, columns - 1)
+        savedCursorRow = savedCursorRow.coerceIn(0, rows - 1)
+        savedCursorCol = savedCursorCol.coerceIn(0, columns - 1)
+    }
 
     private var cursorRow = 0
     private var cursorCol = 0
@@ -247,6 +268,10 @@ class TerminalScreenBuffer(
     }
 
     private fun writeChar(c: Char) {
+        if (cursorCol >= maxCols) {
+            cursorCol = 0
+            lineFeed()
+        }
         val grid = activeGrid()
         if (cursorRow in 0 until maxRows && cursorCol in 0 until maxCols) {
             grid[cursorRow][cursorCol].apply {
@@ -258,10 +283,6 @@ class TerminalScreenBuffer(
             }
         }
         cursorCol++
-        if (cursorCol >= maxCols) {
-            cursorCol = 0
-            lineFeed()
-        }
     }
 
     private fun lineFeed() {
@@ -281,11 +302,9 @@ class TerminalScreenBuffer(
                 }
             }
             // Shift lines up
-            for (r in 0 until maxRows - 1) {
-                for (col in 0 until maxCols) {
-                    grid[r][col].copyFrom(grid[r + 1][col])
-                }
-            }
+            val recycled = grid[0]
+            System.arraycopy(grid, 1, grid, 0, maxRows - 1)
+            grid[maxRows - 1] = recycled
             // Clear bottom row
             for (col in 0 until maxCols) {
                 grid[maxRows - 1][col].reset()

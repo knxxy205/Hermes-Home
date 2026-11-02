@@ -17,13 +17,22 @@ android {
     applicationId = "com.aistudio.homeserver.thns"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 2
+    versionName = "1.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   signingConfigs {
+    getByName("debug") {
+      val stableDebugKeystore = System.getenv("DEBUG_KEYSTORE_PATH")
+      if (!stableDebugKeystore.isNullOrBlank()) {
+        storeFile = file(stableDebugKeystore)
+        storePassword = System.getenv("DEBUG_KEYSTORE_PASSWORD")
+        keyAlias = "homeserver"
+        keyPassword = System.getenv("DEBUG_KEYSTORE_PASSWORD")
+      }
+    }
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
       storeFile = file(keystorePath)

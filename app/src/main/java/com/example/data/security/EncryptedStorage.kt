@@ -90,7 +90,7 @@ class EncryptedStorage(context: Context) {
             Base64.encodeToString(byteBuffer.array(), Base64.NO_WRAP)
         } catch (e: Exception) {
             android.util.Log.e("EncryptedStorage", "Enkripsi gagal pada AndroidKeyStore AES-GCM", e)
-            "" // Strictly return empty string on encryption failure to prevent saving plaintext or weak encoding
+            throw IllegalStateException("Gagal mengenkripsi kredensial; data tidak disimpan", e)
         }
     }
 
@@ -532,7 +532,7 @@ class EncryptedStorage(context: Context) {
     // ==========================================
     // BACKUP & RESTORE CONNECTION PROFILES
     // ==========================================
-    fun exportProfilesPayload(): String {
+    fun exportProfilesPayload(password: String): String {
         val profiles = loadProfiles()
         val root = JSONObject().apply {
             put("format", "HERMES_PROFILES_BACKUP")
@@ -556,14 +556,14 @@ class EncryptedStorage(context: Context) {
             put("profiles", arr)
         }
         val jsonStr = root.toString(2)
-        val base64 = Base64.encodeToString(jsonStr.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-        return "HERMES_BACKUP_V1:$base64"
+        return BackupCipher.encrypt(jsonStr, password)
     }
 
-    fun importProfilesPayload(rawInput: String): Result<List<ConnectionProfile>> {
+    fun importProfilesPayload(rawInput: String, password: String = ""): Result<List<ConnectionProfile>> {
         return try {
             val cleanInput = rawInput.trim()
             val jsonStr = when {
+                cleanInput.startsWith("HERMES_BACKUP_V2:") -> BackupCipher.decrypt(cleanInput, password)
                 cleanInput.startsWith("HERMES_BACKUP_V1:") -> {
                     val b64 = cleanInput.removePrefix("HERMES_BACKUP_V1:").trim()
                     String(Base64.decode(b64, Base64.NO_WRAP), Charsets.UTF_8)

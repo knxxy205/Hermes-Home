@@ -46,6 +46,8 @@ import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -118,6 +120,7 @@ fun HermesChatScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var pendingCommand by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     val listState = rememberLazyListState()
 
     var inputText by remember { mutableStateOf("") }
@@ -471,6 +474,21 @@ fun HermesChatScreen(
         }
     }
 
+    pendingCommand?.let { (command, interactive) ->
+        AlertDialog(
+            onDismissRequest = { pendingCommand = null },
+            title = { Text("Jalankan perintah di server?") },
+            text = { Column {
+                Text("Tujuan: ${serverConfig.sshUser}@${serverConfig.sshHost}")
+                Text(command, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 12.dp))
+            } },
+            confirmButton = { TextButton(onClick = {
+                pendingCommand = null
+                if (interactive) onExecuteInTerminal?.invoke(command) else handleRunOnServer(command)
+            }) { Text("Jalankan") } },
+            dismissButton = { TextButton(onClick = { pendingCommand = null }) { Text("Batal") } }
+        )
+    }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -607,8 +625,8 @@ fun HermesChatScreen(
                     onActionClick = { actionType, value ->
                         handleInteractiveAction(actionType, value)
                     },
-                    onRunOnServer = { cmd -> handleRunOnServer(cmd) },
-                    onExecuteInTerminal = onExecuteInTerminal
+                    onRunOnServer = { cmd -> pendingCommand = cmd to false },
+                    onExecuteInTerminal = if (onExecuteInTerminal != null) ({ cmd -> pendingCommand = cmd to true }) else null
                 )
             }
 

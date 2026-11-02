@@ -250,7 +250,7 @@ class SettingsViewModel(
         onConfigUpdated(config)
     }
 
-    fun exportProfiles(): String {
+    fun exportProfiles(password: String): String {
         // Auto-save current form into active profile before exporting
         val state = _uiState.value
         val config = state.buildServerConfig()
@@ -259,11 +259,11 @@ class SettingsViewModel(
             config = config
         )
         encryptedStorage.saveProfile(currentDraft)
-        return encryptedStorage.exportProfilesPayload()
+        return encryptedStorage.exportProfilesPayload(password)
     }
 
-    fun importProfiles(payload: String, onConfigUpdated: (ServerConfig) -> Unit): Result<Int> {
-        val result = encryptedStorage.importProfilesPayload(payload)
+    fun importProfiles(payload: String, onConfigUpdated: (ServerConfig) -> Unit, password: String = ""): Result<Int> {
+        val result = encryptedStorage.importProfilesPayload(payload, password)
         return result.mapCatching { importedList ->
             val first = importedList.first()
             _uiState.update {
@@ -301,9 +301,11 @@ class SettingsViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val jsch = JSch()
+                val trust = com.example.data.security.SshTrust.configure(jsch)
                 val session = jsch.getSession(cfg.sshUser, cfg.sshHost, cfg.sshPort)
                 session.setPassword(cfg.sshPassword)
-                session.setConfig("StrictHostKeyChecking", "no")
+                session.userInfo = trust
+                session.setConfig("StrictHostKeyChecking", "ask")
                 session.connect(10000)
                 session.disconnect()
                 withContext(Dispatchers.Main) {

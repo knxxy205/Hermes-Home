@@ -25,7 +25,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -64,6 +65,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -111,10 +116,14 @@ fun SettingsScreen(
     )
 ) {
     val context = LocalContext.current
-    val scrollState = rememberScrollState()
+    val scrollState = rememberLazyListState()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     var showExportDialog by remember { mutableStateOf(false) }
+    var showBackupPasswordDialog by remember { mutableStateOf(false) }
+    var backupPassword by remember { mutableStateOf("") }
+    var backupBusy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     var exportPayloadText by remember { mutableStateOf("") }
     var showImportDialog by remember { mutableStateOf(false) }
     var importInputText by remember { mutableStateOf("") }
@@ -127,6 +136,30 @@ fun SettingsScreen(
         }
     }
 
+    if (showBackupPasswordDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!backupBusy) { showBackupPasswordDialog = false; backupPassword = "" } },
+            title = { Text("Enkripsi backup") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Gunakan password minimal 12 karakter. Password ini diperlukan untuk memulihkan backup di perangkat lain.")
+                    OutlinedTextField(value = backupPassword, onValueChange = { backupPassword = it },
+                        label = { Text("Password backup") }, visualTransformation = PasswordVisualTransformation())
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = backupPassword.length >= 12 && !backupBusy, onClick = {
+                    backupBusy = true
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) { runCatching { viewModel.exportProfiles(backupPassword) } }
+                        backupBusy = false
+                        result.onSuccess { exportPayloadText = it; showBackupPasswordDialog = false; showExportDialog = true; backupPassword = "" }
+                            .onFailure { Toast.makeText(context, "Backup gagal: ${it.localizedMessage}", Toast.LENGTH_LONG).show() }
+                    }
+                }) { Text(if (backupBusy) "Mengenkripsi…" else "Buat backup") }
+            }
+        )
+    }
     // Export Dialog
     if (showExportDialog) {
         AlertDialog(
@@ -142,7 +175,7 @@ fun SettingsScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "String backup dienkripsi dalam Base64. Anda dapat menyalin teks ini untuk dicadangkan atau ditransfer.",
+                        text = "Backup dilindungi AES-GCM dengan password kamu. Simpan password terpisah dari backup.",
                         color = TextSecondary,
                         fontSize = 12.sp,
                         lineHeight = 16.sp
@@ -225,8 +258,10 @@ fun SettingsScreen(
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(value = backupPassword, onValueChange = { backupPassword = it },
+                        label = { Text("Password backup V2") }, visualTransformation = PasswordVisualTransformation())
                     Text(
-                        text = "Tempelkan string backup (format HERMES_BACKUP_V1:... atau Base64) untuk memulihkan seluruh profil koneksi.",
+                        text = "Tempel backup V2 dan masukkan passwordnya. Backup V1 lama juga masih dapat diimpor tanpa password.",
                         color = TextSecondary,
                         fontSize = 12.sp,
                         lineHeight = 16.sp
@@ -235,7 +270,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = importInputText,
                         onValueChange = { importInputText = it },
-                        placeholder = { Text("HERMES_BACKUP_V1:...", color = TextSecondary.copy(alpha = 0.5f), fontSize = 12.sp) },
+                        placeholder = { Text("HERMES_BACKUP_V2:...", color = TextSecondary.copy(alpha = 0.5f), fontSize = 12.sp) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(110.dp),
@@ -323,13 +358,19 @@ fun SettingsScreen(
                 Button(
                     onClick = {
                         showImportConfirmDialog = false
-                        val res = viewModel.importProfiles(importInputText, onConfigUpdated)
+                        backupBusy = true
+                        scope.launch {
+                        val res = withContext(Dispatchers.IO) { viewModel.importProfiles(importInputText, {}, backupPassword) }
+                        backupBusy = false
                         res.onSuccess { count ->
+                            onConfigUpdated(encryptedStorage.loadConfig())
                             Toast.makeText(context, "Profiles Restored! ($count profil)", Toast.LENGTH_SHORT).show()
                             showImportDialog = false
                             importInputText = ""
+                            backupPassword = ""
                         }.onFailure { err ->
                             Toast.makeText(context, "Gagal import: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
+                        }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = Color.White)
@@ -356,14 +397,15 @@ fun SettingsScreen(
             subtitle = "Koneksi, profil & keamanan"
         )
 
-        Column(
+        LazyColumn(
+            state = scrollState,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+            item(key = "profiles", contentType = "form") {
             // Profile Selector Card (Rumah LAN vs Di Luar Tailscale)
             TailHarnessCard(
                 backgroundColor = NavyDarkCard,
@@ -514,8 +556,8 @@ fun SettingsScreen(
                     ) {
                         OutlinedButton(
                             onClick = {
-                                exportPayloadText = viewModel.exportProfiles()
-                                showExportDialog = true
+                                backupPassword = ""
+                                showBackupPasswordDialog = true
                             },
                             modifier = Modifier.weight(1f).height(38.dp),
                             shape = RoundedCornerShape(10.dp),
@@ -547,6 +589,8 @@ fun SettingsScreen(
                 }
             }
 
+            }
+            item(key = "security", contentType = "summary") {
             // Security Info Card (Android Keystore + Hardware-backed encryption)
             TailHarnessCard(
                 backgroundColor = NavyDarkCard,
@@ -605,6 +649,8 @@ fun SettingsScreen(
                 }
             }
 
+            }
+            item(key = "ssh", contentType = "form") {
             // SECTION 1: HOMESERVER SSH VIA TAILSCALE
             TailHarnessCard(
                 backgroundColor = NavyDarkCard,
@@ -769,6 +815,8 @@ fun SettingsScreen(
                 }
             }
 
+            }
+            item(key = "hermes", contentType = "form") {
             // SECTION 2: HERMES AI AGENT (OPENAI-COMPATIBLE)
             TailHarnessCard(
                 backgroundColor = NavyDarkCard,
@@ -991,6 +1039,9 @@ fun SettingsScreen(
                 }
             }
 
+            }
+            item(key = "save", contentType = "actions") {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             // Action Buttons
             Button(
                 onClick = { viewModel.saveSettings(onConfigUpdated) },
@@ -1023,6 +1074,8 @@ fun SettingsScreen(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+            }
+            }
         }
     }
 }
