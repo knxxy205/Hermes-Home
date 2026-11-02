@@ -15,9 +15,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -57,13 +59,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material3.Surface
 import androidx.activity.SystemBarStyle
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
@@ -73,8 +75,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
-import androidx.compose.foundation.layout.ime
-import androidx.compose.ui.platform.LocalDensity
 import com.example.data.hermes.ChatMessage
 import com.example.data.hermes.HermesApiClient
 import com.example.data.security.BiometricAuthHelper
@@ -233,7 +233,9 @@ fun MainContentScreen() {
     var selectedTab by remember { mutableStateOf(AppTab.TERMINAL) }
     val density = LocalDensity.current
     val imeInsets = WindowInsets.ime
-    val keyboardVisible by remember(density, imeInsets) { androidx.compose.runtime.derivedStateOf { imeInsets.getBottom(density) > 0 } }
+    val keyboardVisible by remember(density) {
+        androidx.compose.runtime.derivedStateOf { imeInsets.getBottom(density) > 0 }
+    }
     val terminalActive = selectedTab == AppTab.TERMINAL
     val activity = context as? androidx.activity.ComponentActivity
     DisposableEffect(terminalActive) {
@@ -290,7 +292,7 @@ fun MainContentScreen() {
     }
 
     Scaffold(
-        modifier = Modifier.fillMaxSize().imePadding(),
+        modifier = Modifier.fillMaxSize(),
         containerColor = if (terminalActive) Color(0xff141729) else NavyDarkBackground,
         contentWindowInsets = WindowInsets.statusBars,
         bottomBar = {
@@ -304,6 +306,7 @@ fun MainContentScreen() {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .imePadding()
         ) {
             // Keep Terminal alive: SSH session, PTY buffer, and scroll NEVER disconnect on tab change
             Box(

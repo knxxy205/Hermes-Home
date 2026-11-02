@@ -58,6 +58,11 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -637,36 +642,7 @@ fun HermesChatScreen(
 
             if (isSending) {
                 item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(BurntOrangeBadgeBg)
-                                .border(1.dp, BurntOrangeBorder, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Forum, contentDescription = null, tint = BurntOrange, modifier = Modifier.size(16.dp))
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        CircularProgressIndicator(
-                            color = BurntOrange,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Hermes sedang merespon...",
-                            color = TextSecondary,
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
+                    HermesThinkingIndicator(model = serverConfig.hermesModel)
                 }
             }
         }
@@ -1034,6 +1010,59 @@ fun HermesChatScreen(
 }
 
 @Composable
+private fun HermesThinkingIndicator(model: String) {
+    val transition = rememberInfiniteTransition(label = "hermes_thinking")
+    val first by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(620), repeatMode = RepeatMode.Reverse),
+        label = "thinking_dot_1"
+    )
+    val second by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(620, delayMillis = 180), repeatMode = RepeatMode.Reverse),
+        label = "thinking_dot_2"
+    )
+    val third by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(620, delayMillis = 360), repeatMode = RepeatMode.Reverse),
+        label = "thinking_dot_3"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 38.dp, end = 26.dp, top = 2.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp))
+                .background(Color.White)
+                .border(1.dp, Color(0xffe6edf7), RoundedCornerShape(topStart = 8.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp))
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            listOf(first, second, third).forEach { alpha ->
+                Box(
+                    Modifier
+                        .padding(end = 4.dp)
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(BurntOrange.copy(alpha = alpha))
+                )
+            }
+            Spacer(Modifier.width(5.dp))
+            Text("Hermes sedang berpikir", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(model.take(22), color = TextSecondary.copy(alpha = 0.75f), fontSize = 10.sp, maxLines = 1)
+    }
+}
+
+@Composable
 fun ChatMessageItem(
     message: ChatMessage,
     currentModel: String = "",
@@ -1043,13 +1072,19 @@ fun ChatMessageItem(
     onExecuteInTerminal: ((String) -> Unit)? = null
 ) {
     val isUser = message.role == "user"
+    val bubbleShape = RoundedCornerShape(
+        topStart = 22.dp,
+        topEnd = 22.dp,
+        bottomStart = if (isUser) 22.dp else 7.dp,
+        bottomEnd = if (isUser) 7.dp else 22.dp
+    )
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
     ) {
         Row(
-            modifier = Modifier.widthIn(max = 340.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
         ) {
@@ -1074,32 +1109,41 @@ fun ChatMessageItem(
 
             Box(
                 modifier = Modifier
-                    .clip(
-                        RoundedCornerShape(
-                            topStart = 22.dp,
-                            topEnd = 22.dp,
-                            bottomStart = if (isUser) 22.dp else 6.dp,
-                            bottomEnd = if (isUser) 6.dp else 22.dp
-                        )
+                    .widthIn(max = if (isUser) 320.dp else 380.dp)
+                    .clip(bubbleShape)
+                    .background(
+                        when {
+                            message.isError -> Color(0xfffff1f2)
+                            isUser -> Color(0xff3278e8)
+                            else -> Color.White
+                        }
                     )
-                    .background(if (isUser) BurntOrangePillBg else NavyDarkCard)
                     .border(
                         1.dp,
                         when {
-                            message.isError -> TerminalRed
-                            isUser -> BurntOrangeBorder
-                            else -> NavyCardBorder
+                            message.isError -> Color(0xfffecdd3)
+                            isUser -> Color(0xff2f6dd0)
+                            else -> Color(0xffe6edf7)
                         },
-                        RoundedCornerShape(
-                            topStart = 22.dp,
-                            topEnd = 22.dp,
-                            bottomStart = if (isUser) 22.dp else 6.dp,
-                            bottomEnd = if (isUser) 6.dp else 22.dp
-                        )
+                        bubbleShape
                     )
-                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                    .padding(horizontal = 16.dp, vertical = 13.dp)
             ) {
                 Column {
+                    if (!isUser) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Forum, null, tint = if (message.isError) TerminalRed else BurntOrange, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = if (message.isError) "HERMES · PERLU PERHATIAN" else "HERMES  ·  ${currentModel.ifBlank { "AI ASSISTANT" }}",
+                                color = if (message.isError) TerminalRed else BurntOrange,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.45.sp
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
                     SelectionContainer {
                         // Render text with code block highlighting if content contains markdown code blocks
                         val content = message.content
@@ -1112,7 +1156,7 @@ fun ChatMessageItem(
                         } else {
                             Text(
                                 text = content,
-                                color = if (message.isError) TerminalRed else TextPrimary,
+                                color = when { message.isError -> TerminalRed; isUser -> Color.White; else -> TextPrimary },
                                 fontSize = 14.sp,
                                 lineHeight = 23.sp
                             )
@@ -1178,14 +1222,14 @@ fun ChatMessageItem(
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
+                            horizontalArrangement = Arrangement.Start,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(NavyDarkSurface)
-                                    .border(1.dp, NavyDarkBorder, RoundedCornerShape(6.dp))
+                                    .background(Color(0xfff4f7fc))
+                                    .border(1.dp, Color(0xffe6edf7), RoundedCornerShape(8.dp))
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
                                 IconButton(
