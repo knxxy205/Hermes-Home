@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.Button
@@ -166,11 +165,6 @@ fun VaultLockScreen(onUnlockRequested: () -> Unit) {
     val config = remember { EncryptedStorage(context).loadConfig() }
     Box(Modifier.fillMaxSize().background(NavyDarkBackground).padding(24.dp), contentAlignment = Alignment.Center) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Box(Modifier.size(96.dp).clip(RoundedCornerShape(32.dp)).background(BurntOrangeBadgeBg)
-                .border(1.dp, BurntOrangeBorder, RoundedCornerShape(32.dp)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.Fingerprint, "Biometric Vault", tint = BurntOrange, modifier = Modifier.size(54.dp))
-            }
-            Spacer(Modifier.height(24.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(76.dp).clip(RoundedCornerShape(20.dp)).background(BurntOrange)) {
                     Image(painterResource(R.drawable.homeserver_mark), "Homeserver Remote", Modifier.fillMaxSize())

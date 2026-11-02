@@ -642,7 +642,7 @@ fun HermesChatScreen(
 
             if (isSending) {
                 item {
-                    HermesThinkingIndicator(model = serverConfig.hermesModel)
+                    HermesThinkingIndicator()
                 }
             }
         }
@@ -1010,7 +1010,7 @@ fun HermesChatScreen(
 }
 
 @Composable
-private fun HermesThinkingIndicator(model: String) {
+private fun HermesThinkingIndicator() {
     val transition = rememberInfiniteTransition(label = "hermes_thinking")
     val first by transition.animateFloat(
         initialValue = 0.35f,
@@ -1034,9 +1034,20 @@ private fun HermesThinkingIndicator(model: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 38.dp, end = 26.dp, top = 2.dp, bottom = 4.dp),
+            .padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(BurntOrangeBadgeBg)
+                .border(1.dp, BurntOrangeBorder, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Default.Forum, null, tint = BurntOrange, modifier = Modifier.size(15.dp))
+        }
+        Spacer(Modifier.width(8.dp))
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp))
@@ -1048,17 +1059,14 @@ private fun HermesThinkingIndicator(model: String) {
             listOf(first, second, third).forEach { alpha ->
                 Box(
                     Modifier
-                        .padding(end = 4.dp)
                         .size(7.dp)
                         .clip(CircleShape)
                         .background(BurntOrange.copy(alpha = alpha))
                 )
+                Spacer(Modifier.width(4.dp))
             }
-            Spacer(Modifier.width(5.dp))
             Text("Hermes sedang berpikir", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         }
-        Spacer(Modifier.width(8.dp))
-        Text(model.take(22), color = TextSecondary.copy(alpha = 0.75f), fontSize = 10.sp, maxLines = 1)
     }
 }
 

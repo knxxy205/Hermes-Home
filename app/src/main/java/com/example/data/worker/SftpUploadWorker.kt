@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.Data
@@ -112,8 +113,10 @@ class SftpUploadWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 .putLong(KEY_FILE_SIZE, lastFileSize)
                 .putString(KEY_REMOTE_PATH, remotePath)
                 .build()
+            notifyUploadFinished(uris.size - failed, failed, complete, remotePath)
             Result.success(summary)
         } catch (e: Exception) {
+            notifyUploadFinished(0, 1, 0L, inputData.getString(KEY_REMOTE_PATH) ?: "/")
             Result.failure(Data.Builder().putString("error", e.localizedMessage ?: "Unggahan gagal").build())
         } finally {
             queueFile.delete()
@@ -150,6 +153,31 @@ class SftpUploadWorker(context: Context, params: WorkerParameters) : CoroutineWo
         } else ForegroundInfo(NOTIFICATION_ID, notification)
     }
 
+    private fun notifyUploadFinished(successCount: Int, failedCount: Int, bytes: Long, remotePath: String) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            applicationContext.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
+
+        val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= 26) {
+            manager.createNotificationChannel(
+                NotificationChannel(CHANNEL, "Unggahan SFTP", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+        }
+        val title = if (failedCount == 0) "Upload selesai" else "Upload selesai dengan kendala"
+        val content = "$successCount berhasil · $failedCount gagal · ${formatBytes(bytes)} ke $remotePath"
+        val notification = NotificationCompat.Builder(applicationContext, CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_upload_done)
+            .setContentTitle(title)
+            .setContentText(content)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(content))
+            .setAutoCancel(true)
+            .setOngoing(false)
+            .setOnlyAlertOnce(false)
+            .build()
+        manager.notify(COMPLETION_NOTIFICATION_ID, notification)
+    }
+
     companion object {
         const val TAG = "sftp_upload"
         const val KEY_QUEUE = "queue_file"
@@ -166,6 +194,7 @@ class SftpUploadWorker(context: Context, params: WorkerParameters) : CoroutineWo
         const val KEY_FAILED = "failed_count"
         private const val CHANNEL = "sftp_uploads"
         private const val NOTIFICATION_ID = 7402
+        private const val COMPLETION_NOTIFICATION_ID = 7403
 
         fun formatBytes(bytes: Long): String = when {
             bytes < 1024 * 1024 -> String.format(Locale.getDefault(), "%.0f KB", bytes / 1024.0)

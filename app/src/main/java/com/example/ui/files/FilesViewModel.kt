@@ -150,10 +150,11 @@ class FilesViewModel(
     fun uploadMultipleFiles(
         context: Context,
         uris: List<Uri>,
-        config: ServerConfig
+        config: ServerConfig,
+        destinationPath: String = _uiState.value.currentPath
     ) {
         if (uris.isEmpty()) return
-        val currentPath = _uiState.value.currentPath
+        val targetPath = destinationPath.ifBlank { "/" }
         val queueFile = File(context.filesDir, "sftp-upload-${System.currentTimeMillis()}.json")
         val queue = JSONArray()
         uris.forEach { uri ->
@@ -166,7 +167,7 @@ class FilesViewModel(
             .setInputData(workDataOf(
                 SftpUploadWorker.KEY_QUEUE to queueFile.absolutePath,
                 SftpUploadWorker.KEY_PROFILE to profileId,
-                SftpUploadWorker.KEY_REMOTE_PATH to currentPath
+                SftpUploadWorker.KEY_REMOTE_PATH to targetPath
             ))
             .addTag(SftpUploadWorker.TAG)
             .build()

@@ -6,7 +6,6 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -42,7 +41,6 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NoteAdd
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Search
@@ -138,13 +136,13 @@ fun FilesScreen(
                 val path = currentUpload.outputData.getString(SftpUploadWorker.KEY_REMOTE_PATH).orEmpty()
                 val failed = currentUpload.outputData.getInt(SftpUploadWorker.KEY_FAILED, 0)
                 viewModel.reportBackgroundUploadResult("Upload selesai · ${count - failed}/$count berhasil · ${SftpUploadWorker.formatBytes(bytes)}${if (total > 0) " / ${SftpUploadWorker.formatBytes(total)}" else ""} ke $path", failed > 0)
-                viewModel.loadFiles(config = serverConfig)
+                if (path == uiState.currentPath) viewModel.loadFiles(config = serverConfig)
             }
             WorkInfo.State.FAILED -> {
                 val count = currentUpload.outputData.getInt(SftpUploadWorker.KEY_FAILED, 0)
                 val path = currentUpload.outputData.getString(SftpUploadWorker.KEY_REMOTE_PATH).orEmpty()
                 viewModel.reportBackgroundUploadResult("Upload selesai dengan $count file gagal ke $path", true)
-                viewModel.loadFiles(config = serverConfig)
+                if (path == uiState.currentPath) viewModel.loadFiles(config = serverConfig)
             }
             else -> Unit
         }
@@ -183,6 +181,7 @@ fun FilesScreen(
     }
 
     // 1. Storage Access Framework (SAF) Multiple File Picker Contract initialized in root Composable
+    var uploadDestinationPath by remember { mutableStateOf(uiState.currentPath) }
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
@@ -190,15 +189,10 @@ fun FilesScreen(
             viewModel.uploadMultipleFiles(
                 context = context.applicationContext,
                 uris = uris,
-                config = serverConfig
+                config = serverConfig,
+                destinationPath = uploadDestinationPath
             )
         }
-    }
-
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia(100)
-    ) { uris ->
-        if (uris.isNotEmpty()) viewModel.uploadMultipleFiles(context.applicationContext, uris, serverConfig)
     }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -214,6 +208,7 @@ fun FilesScreen(
     val launchFilePicker = {
         try {
             ensureUploadNotificationPermission()
+            uploadDestinationPath = uiState.currentPath
             filePickerLauncher.launch(arrayOf("*/*"))
         } catch (e: Exception) {
             Toast.makeText(
@@ -265,13 +260,7 @@ fun FilesScreen(
                 trailingContent = {
                     if (serverConfig.isSshConfigured) Row {
                         IconButton(
-                            onClick = { ensureUploadNotificationPermission(); photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                            modifier = Modifier.size(48.dp).testTag("upload_photos_button")
-                        ) {
-                            Icon(Icons.Default.PhotoLibrary, "Pilih banyak foto", tint = BurntOrange)
-                        }
-                        IconButton(
-                            onClick = { ensureUploadNotificationPermission(); launchFilePicker() },
+                            onClick = launchFilePicker,
                             modifier = Modifier.size(48.dp).testTag("upload_file_button")
                         ) {
                             Icon(
@@ -583,7 +572,7 @@ fun FilesScreen(
 
         // Floating Action Button for quick upload
         if (serverConfig.isSshConfigured) FloatingActionButton(
-            onClick = { ensureUploadNotificationPermission(); photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            onClick = launchFilePicker,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(20.dp)
