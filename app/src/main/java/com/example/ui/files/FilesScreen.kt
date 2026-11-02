@@ -28,9 +28,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Folder
@@ -45,6 +49,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
@@ -107,6 +112,7 @@ fun FilesScreen(
     serverConfig: ServerConfig,
     viewModel: FilesViewModel = viewModel(factory = FilesViewModel.provideFactory(sftpManager)),
     onAskHermesAboutFile: ((fileName: String, content: String) -> Unit)? = null,
+    onOpenSettings: (() -> Unit)? = null,
     isTabActive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -179,6 +185,13 @@ fun FilesScreen(
         }
     }
 
+    LaunchedEffect(uiState.transferStatus) {
+        if (uiState.transferStatus != null) {
+            kotlinx.coroutines.delay(5000)
+            viewModel.clearTransferStatus()
+        }
+    }
+
     // Initial load and reload when config changes
     LaunchedEffect(serverConfig) {
         viewModel.loadFiles(config = serverConfig)
@@ -203,7 +216,7 @@ fun FilesScreen(
                 title = "Files",
                 subtitle = if (serverConfig.isSshConfigured) serverConfig.sshHost else "Jelajahi file · Sandbox",
                 trailingContent = {
-                    Row {
+                    if (serverConfig.isSshConfigured) Row {
                         IconButton(
                             onClick = launchFilePicker,
                             modifier = Modifier.size(48.dp).testTag("upload_file_button")
@@ -306,44 +319,48 @@ fun FilesScreen(
                     .heightIn(min = 56.dp)
             )
 
-            // Upload in progress banner
-            if (uiState.isUploading) {
+            // Transfer state: persistent progress while active, concise completion result afterwards.
+            if (uiState.isUploading || uiState.isDownloading || uiState.transferStatus != null) {
                 TailHarnessCard(
-                    backgroundColor = NavyDarkCard,
-                    borderColor = BurntOrange,
+                    backgroundColor = Color.White,
+                    borderColor = Color(0xffe2e8f0),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CircularProgressIndicator(
-                            color = BurntOrange,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                text = "Mengunggah file ke ${uiState.currentPath}...",
-                                color = TextPrimary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
-                            )
-                            uiState.uploadingFileName?.let {
-                                Text(
-                                    text = it,
-                                    color = BurntOrange,
-                                    fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (uiState.isUploading || uiState.isDownloading) {
+                                CircularProgressIndicator(color = Color(0xff3b82f6), strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                            } else if (uiState.transferFailed) {
+                                Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = Color(0xffbe123c), modifier = Modifier.size(20.dp))
+                            } else {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xff0f5f51), modifier = Modifier.size(20.dp))
                             }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    uiState.transferStatus ?: if (uiState.isUploading) "Mengunggah ke ${uiState.currentPath}" else "Mengunduh file",
+                                    color = Color(0xff1e293b), fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+                                    maxLines = 2, overflow = TextOverflow.Ellipsis
+                                )
+                                (uiState.uploadingFileName ?: uiState.downloadingFileName)?.let {
+                                    Text(it, color = Color(0xff64748b), fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            if (uiState.transferStatus != null) {
+                                IconButton(onClick = viewModel::clearTransferStatus, modifier = Modifier.size(40.dp)) {
+                                    Icon(Icons.Default.Close, "Tutup status transfer", tint = Color(0xff64748b))
+                                }
+                            }
+                        }
+                        if (uiState.isUploading || uiState.isDownloading) {
+                            Spacer(Modifier.height(10.dp))
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(4.dp)),
+                                color = Color(0xff3b82f6), trackColor = Color(0xffe2e8f0)
+                            )
                         }
                     }
                 }
@@ -358,9 +375,33 @@ fun FilesScreen(
                     .fillMaxWidth()
             ) {
                 when {
+                    !serverConfig.isSshConfigured -> {
+                        Column(
+                            Modifier.fillMaxSize().padding(28.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Box(Modifier.size(72.dp).clip(RoundedCornerShape(24.dp)).background(Color(0xffeaf2fe)), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.FolderOpen, null, tint = Color(0xff3b82f6), modifier = Modifier.size(34.dp))
+                            }
+                            Spacer(Modifier.height(18.dp))
+                            Text("Hubungkan ke server", color = Color(0xff1e293b), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(6.dp))
+                            Text("Simpan konfigurasi SSH di Settings untuk menjelajahi dan mengelola file.",
+                                color = Color(0xff64748b), fontSize = 14.sp, lineHeight = 20.sp)
+                            Spacer(Modifier.height(18.dp))
+                            Button(onClick = { onOpenSettings?.invoke() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xff3b82f6))) {
+                                Text("Buka Settings", color = Color.White)
+                            }
+                        }
+                    }
                     uiState.isLoading -> {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = BurntOrange)
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(color = Color(0xff3b82f6))
+                                Spacer(Modifier.height(12.dp))
+                                Text("Memuat file server…", color = Color(0xff64748b), fontSize = 13.sp)
+                            }
                         }
                     }
                     uiState.errorMessage != null -> {
@@ -373,14 +414,19 @@ fun FilesScreen(
                         ) {
                             Text(
                                 text = uiState.errorMessage ?: "Error",
-                                color = TerminalRed,
+                                color = Color(0xffbe123c),
                                 fontSize = 14.sp,
                                 fontFamily = FontFamily.Monospace
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Periksa host, port, username, dan koneksi jaringan server.",
+                                color = Color(0xff64748b), fontSize = 13.sp, lineHeight = 18.sp
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
                                 onClick = { viewModel.loadFiles(config = serverConfig) },
-                                colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xff3b82f6))
                             ) {
                                 Text("Coba Lagi", color = Color.White)
                             }
@@ -397,11 +443,13 @@ fun FilesScreen(
                             Icon(
                                 Icons.Default.FolderOpen,
                                 contentDescription = null,
-                                tint = TextSecondary.copy(alpha = 0.4f),
+                                tint = Color(0xff64748b).copy(alpha = 0.45f),
                                 modifier = Modifier.size(48.dp)
                             )
                             Spacer(modifier = Modifier.height(12.dp))
-                            Text("Folder kosong", color = TextSecondary, fontSize = 14.sp)
+                            Text("Folder ini masih kosong", color = Color(0xff1e293b), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(4.dp))
+                            Text("Unggah file atau buat folder untuk mulai mengisi.", color = Color(0xff64748b), fontSize = 13.sp)
                         }
                     }
                     else -> {
@@ -469,15 +517,15 @@ fun FilesScreen(
         }
 
         // Floating Action Button for quick upload
-        FloatingActionButton(
+        if (serverConfig.isSshConfigured) FloatingActionButton(
             onClick = launchFilePicker,
-            containerColor = BurntOrange,
-            contentColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(20.dp)
-                .testTag("upload_file_fab")
+                .testTag("upload_file_fab"),
+            containerColor = Color(0xff3b82f6),
+            contentColor = Color.White,
+            shape = RoundedCornerShape(16.dp)
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
@@ -502,20 +550,23 @@ fun FilesScreen(
     if (showNewFolderDialog) {
         AlertDialog(
             onDismissRequest = { showNewFolderDialog = false },
-            containerColor = NavyDarkCard,
-            titleContentColor = TextPrimary,
+            containerColor = Color.White,
+            titleContentColor = Color(0xff1e293b),
+            shape = RoundedCornerShape(28.dp),
             title = { Text("Buat Folder Baru", fontWeight = FontWeight.Bold) },
             text = {
                 OutlinedTextField(
                     value = newFolderName,
                     onValueChange = { newFolderName = it },
-                    placeholder = { Text("Nama folder (contoh: scripts)") },
+                    label = { Text("Nama folder") },
+                    placeholder = { Text("contoh: scripts") },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = BurntOrange,
-                        unfocusedBorderColor = NavyDarkBorder,
-                        focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary
+                        focusedBorderColor = Color(0xff3b82f6),
+                        unfocusedBorderColor = Color(0xffe2e8f0),
+                        focusedTextColor = Color(0xff1e293b),
+                        unfocusedTextColor = Color(0xff1e293b),
+                        focusedLabelColor = Color(0xff3b82f6)
                     )
                 )
             },
@@ -528,14 +579,14 @@ fun FilesScreen(
                             newFolderName = ""
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xff3b82f6))
                 ) {
                     Text("Buat", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showNewFolderDialog = false }) {
-                    Text("Batal", color = TextSecondary)
+                    TextButton(onClick = { showNewFolderDialog = false }) {
+                    Text("Batal", color = Color(0xff64748b))
                 }
             }
         )
@@ -545,34 +596,39 @@ fun FilesScreen(
     if (showNewFileDialog) {
         AlertDialog(
             onDismissRequest = { showNewFileDialog = false },
-            containerColor = NavyDarkCard,
-            titleContentColor = TextPrimary,
+            containerColor = Color.White,
+            titleContentColor = Color(0xff1e293b),
+            shape = RoundedCornerShape(28.dp),
             title = { Text("Buat File Baru", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = newFileName,
                         onValueChange = { newFileName = it },
-                        placeholder = { Text("Nama file (contoh: config.json)") },
+                        label = { Text("Nama file") },
+                        placeholder = { Text("contoh: config.json") },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = BurntOrange,
-                            unfocusedBorderColor = NavyDarkBorder,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary
+                            focusedBorderColor = Color(0xff3b82f6),
+                            unfocusedBorderColor = Color(0xffe2e8f0),
+                            focusedTextColor = Color(0xff1e293b),
+                            unfocusedTextColor = Color(0xff1e293b),
+                            focusedLabelColor = Color(0xff3b82f6)
                         )
                     )
                     OutlinedTextField(
                         value = newFileContent,
                         onValueChange = { newFileContent = it },
-                        placeholder = { Text("Isi file teks...") },
+                        label = { Text("Isi file") },
+                        placeholder = { Text("Tulis isi file teks…") },
                         maxLines = 6,
                         modifier = Modifier.height(120.dp),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = BurntOrange,
-                            unfocusedBorderColor = NavyDarkBorder,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary
+                            focusedBorderColor = Color(0xff3b82f6),
+                            unfocusedBorderColor = Color(0xffe2e8f0),
+                            focusedTextColor = Color(0xff1e293b),
+                            unfocusedTextColor = Color(0xff1e293b),
+                            focusedLabelColor = Color(0xff3b82f6)
                         )
                     )
                 }
@@ -587,14 +643,14 @@ fun FilesScreen(
                             newFileContent = ""
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xff3b82f6))
                 ) {
                     Text("Simpan", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showNewFileDialog = false }) {
-                    Text("Batal", color = TextSecondary)
+                    TextButton(onClick = { showNewFileDialog = false }) {
+                    Text("Batal", color = Color(0xff64748b))
                 }
             }
         )
@@ -605,19 +661,22 @@ fun FilesScreen(
     if (renameItem != null) {
         AlertDialog(
             onDismissRequest = { itemToRename = null },
-            containerColor = NavyDarkCard,
-            titleContentColor = TextPrimary,
+            containerColor = Color.White,
+            titleContentColor = Color(0xff1e293b),
+            shape = RoundedCornerShape(28.dp),
             title = { Text("Ganti Nama", fontWeight = FontWeight.Bold) },
             text = {
                 OutlinedTextField(
                     value = renameNewName,
                     onValueChange = { renameNewName = it },
+                    label = { Text("Nama baru") },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = BurntOrange,
-                        unfocusedBorderColor = NavyDarkBorder,
-                        focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary
+                        focusedBorderColor = Color(0xff3b82f6),
+                        unfocusedBorderColor = Color(0xffe2e8f0),
+                        focusedTextColor = Color(0xff1e293b),
+                        unfocusedTextColor = Color(0xff1e293b),
+                        focusedLabelColor = Color(0xff3b82f6)
                     )
                 )
             },
@@ -629,14 +688,14 @@ fun FilesScreen(
                             itemToRename = null
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xff3b82f6))
                 ) {
                     Text("Simpan", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { itemToRename = null }) {
-                    Text("Batal", color = TextSecondary)
+                    TextButton(onClick = { itemToRename = null }) {
+                    Text("Batal", color = Color(0xff64748b))
                 }
             }
         )
@@ -647,11 +706,12 @@ fun FilesScreen(
     if (deleteItem != null) {
         AlertDialog(
             onDismissRequest = { itemToDelete = null },
-            containerColor = NavyDarkCard,
-            titleContentColor = TextPrimary,
-            title = { Text("Hapus ${if (deleteItem.isDirectory) "Folder" else "File"}?", fontWeight = FontWeight.Bold) },
+            containerColor = Color.White,
+            titleContentColor = Color(0xff1e293b),
+            shape = RoundedCornerShape(28.dp),
+            title = { Text("Hapus ${if (deleteItem.isDirectory) "folder" else "file"}?", fontWeight = FontWeight.Bold) },
             text = {
-                Text("Apakah Anda yakin ingin menghapus '${deleteItem.name}' dari homeserver?", color = TextSecondary)
+                Text("${deleteItem.name}\n\nItem ini akan dihapus dari ${uiState.currentPath}. Tindakan ini tidak dapat dibatalkan.", color = Color(0xff64748b))
             },
             confirmButton = {
                 Button(
@@ -659,14 +719,14 @@ fun FilesScreen(
                         viewModel.deleteItem(deleteItem, serverConfig)
                         itemToDelete = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = TerminalRed)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xffbe123c))
                 ) {
                     Text("Hapus", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { itemToDelete = null }) {
-                    Text("Batal", color = TextSecondary)
+                    TextButton(onClick = { itemToDelete = null }) {
+                    Text("Batal", color = Color(0xff64748b))
                 }
             }
         )

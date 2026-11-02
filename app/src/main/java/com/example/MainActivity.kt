@@ -404,8 +404,7 @@ fun MainContentScreen() {
         bottomBar = {
             if (!keyboardVisible) TailHarnessBottomNav(
                 selectedTab = selectedTab,
-                onTabSelected = { selectedTab = it },
-                dark = terminalActive
+                onTabSelected = { selectedTab = it }
             )
         }
     ) { innerPadding ->
@@ -437,6 +436,10 @@ fun MainContentScreen() {
                     sftpManager = sftpManager,
                     serverConfig = serverConfig,
                     onAskHermesAboutFile = handleAskHermesAboutFile,
+                    onOpenSettings = {
+                        selectedTab = AppTab.SETTINGS
+                        serverConfig = encryptedStorage.loadConfig()
+                    },
                     isTabActive = (selectedTab == AppTab.FILES)
                 )
             }
@@ -495,23 +498,22 @@ private fun Modifier.activeScreen(active: Boolean): Modifier = this.then(
 fun TailHarnessBottomNav(
     selectedTab: AppTab,
     onTabSelected: (AppTab) -> Unit,
-    modifier: Modifier = Modifier,
-    dark: Boolean = false
+    modifier: Modifier = Modifier
 ) {
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = if (dark) 0.dp else 16.dp, vertical = if (dark) 0.dp else 8.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
             .navigationBarsPadding(),
-        shape = RoundedCornerShape(if (dark) 0.dp else 26.dp),
-        color = if (dark) Color(0xff141729) else Color.White,
-        shadowElevation = if (dark) 0.dp else 6.dp,
-        border = if (dark) null else androidx.compose.foundation.BorderStroke(1.dp, NavyDarkBorder)
+        shape = RoundedCornerShape(28.dp),
+        color = Color.White,
+        shadowElevation = 6.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xffE2E8F0))
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = if (dark) 0.dp else 8.dp),
+                .padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -521,9 +523,9 @@ fun TailHarnessBottomNav(
                     Column(
                         modifier = Modifier
                             .weight(1f)
-                            .heightIn(min = if (dark) 48.dp else 56.dp)
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(if (isSelected && !dark) BurntOrange else Color.Transparent)
+                            .heightIn(min = 56.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (isSelected) Color(0xff3B82F6) else Color.Transparent)
                             .clickable { onTabSelected(tab) }
                             .padding(vertical = 8.dp)
                             .testTag(tab.tag),
@@ -533,13 +535,13 @@ fun TailHarnessBottomNav(
                         Icon(
                             imageVector = tab.icon,
                             contentDescription = tab.title,
-                            tint = if (dark && isSelected) Color(0xff62ae91) else if (isSelected) Color.White else TextSecondary,
+                            tint = if (isSelected) Color.White else Color(0xff64748B),
                             modifier = Modifier.size(22.dp)
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = tab.title,
-                            color = if (dark && isSelected) Color(0xff62ae91) else if (isSelected) Color.White else TextSecondary,
+                            color = if (isSelected) Color.White else Color(0xff64748B),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium
                         )

@@ -170,31 +170,62 @@ class SettingsViewModel(
         onConfigUpdated(switched.config)
     }
 
-    fun addNewProfile(onConfigUpdated: (ServerConfig) -> Unit) {
+    fun saveNewProfile(
+        name: String,
+        host: String,
+        portText: String,
+        user: String,
+        password: String,
+        onConfigUpdated: (ServerConfig) -> Unit
+    ): Boolean {
         val state = _uiState.value
+        val cleanName = name.trim()
+        val cleanHost = host.trim()
+        val cleanUser = user.trim()
+        val port = portText.toIntOrNull()?.takeIf { it in 1..65535 }
+        if (cleanName.isBlank() || cleanHost.isBlank() || cleanUser.isBlank() || port == null) {
+            _uiState.update { it.copy(statusMessage = "Isi nama, host, username, dan port yang valid") }
+            return false
+        }
         val currentDraft = state.activeProfile.copy(
             name = state.profileName.ifBlank { "Profil ${state.activeProfileId}" },
             config = state.buildServerConfig()
         )
         encryptedStorage.saveProfile(currentDraft)
 
-        val newId = "profile_${System.currentTimeMillis()}"
+        val newId = "profile_${java.util.UUID.randomUUID()}"
         val newProfile = ConnectionProfile(
             id = newId,
-            name = "Profil Baru (${state.profiles.size + 1})",
+            name = cleanName,
             config = ServerConfig(
-                sshHost = "192.168.1.1",
-                sshPort = 22,
-                sshUser = "admin",
-                sshPassword = "",
-                hermesBaseUrl = "https://192.168.1.1:11434",
-                hermesApiKey = "",
-                hermesModel = "hermes-3-llama-3.1-8b"
+                sshHost = cleanHost,
+                sshPort = port,
+                sshUser = cleanUser,
+                sshPassword = password,
+                hermesBaseUrl = state.hermesUrl.trim(),
+                hermesApiKey = state.hermesKey.trim(),
+                hermesModel = state.hermesModel.trim()
             )
         )
         encryptedStorage.saveProfile(newProfile)
         encryptedStorage.saveProfileIds(state.profiles.map { it.id } + newId)
-        selectProfile(newId, onConfigUpdated)
+        encryptedStorage.setActiveProfileId(newId)
+        val reloaded = encryptedStorage.loadProfiles()
+        _uiState.update {
+            it.copy(
+                profiles = reloaded,
+                activeProfileId = newId,
+                profileName = newProfile.name,
+                host = newProfile.config.sshHost,
+                portText = newProfile.config.sshPort.toString(),
+                user = newProfile.config.sshUser,
+                password = newProfile.config.sshPassword,
+                sshTestResult = null,
+                statusMessage = "Profil '$cleanName' ditambahkan"
+            )
+        }
+        onConfigUpdated(newProfile.config)
+        return true
     }
 
     fun deleteCurrentProfile(onConfigUpdated: (ServerConfig) -> Unit) {

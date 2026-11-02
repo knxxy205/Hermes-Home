@@ -128,12 +128,117 @@ fun SettingsScreen(
     var showImportDialog by remember { mutableStateOf(false) }
     var importInputText by remember { mutableStateOf("") }
     var showImportConfirmDialog by remember { mutableStateOf(false) }
+    var showAddProfileDialog by remember { mutableStateOf(false) }
+    var newProfileName by remember { mutableStateOf("") }
+    var newProfileHost by remember { mutableStateOf("") }
+    var newProfilePort by remember { mutableStateOf("22") }
+    var newProfileUser by remember { mutableStateOf("") }
+    var newProfilePassword by remember { mutableStateOf("") }
+    var newProfilePasswordVisible by remember { mutableStateOf(false) }
 
     LaunchedEffect(uiState.statusMessage) {
         uiState.statusMessage?.let { msg ->
             Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
             viewModel.clearStatusMessage()
         }
+    }
+
+    if (showAddProfileDialog) {
+        val validPort = newProfilePort.toIntOrNull()?.let { it in 1..65535 } == true
+        val canSave = newProfileName.isNotBlank() && newProfileHost.isNotBlank() &&
+            newProfileUser.isNotBlank() && validPort
+        AlertDialog(
+            onDismissRequest = { showAddProfileDialog = false },
+            containerColor = Color.White,
+            titleContentColor = Color(0xff1e293b),
+            textContentColor = Color(0xff64748b),
+            shape = RoundedCornerShape(28.dp),
+            title = { Text("Tambah host", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Simpan detail server baru sebagai profil koneksi.", color = Color(0xff64748b), fontSize = 13.sp)
+                    OutlinedTextField(
+                        value = newProfileName, onValueChange = { newProfileName = it },
+                        label = { Text("Nama profil") }, singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xff3b82f6), unfocusedBorderColor = Color(0xffe2e8f0),
+                            focusedTextColor = Color(0xff1e293b), unfocusedTextColor = Color(0xff1e293b),
+                            focusedLabelColor = Color(0xff3b82f6)
+                        ), modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newProfileHost, onValueChange = { newProfileHost = it },
+                        label = { Text("Host atau alamat IP") }, placeholder = { Text("contoh: server.tailnet") },
+                        singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xff3b82f6), unfocusedBorderColor = Color(0xffe2e8f0),
+                            focusedTextColor = Color(0xff1e293b), unfocusedTextColor = Color(0xff1e293b),
+                            focusedLabelColor = Color(0xff3b82f6)
+                        ), modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = newProfileUser, onValueChange = { newProfileUser = it },
+                            label = { Text("Username") }, singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xff3b82f6), unfocusedBorderColor = Color(0xffe2e8f0),
+                                focusedTextColor = Color(0xff1e293b), unfocusedTextColor = Color(0xff1e293b),
+                                focusedLabelColor = Color(0xff3b82f6)
+                            ), modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = newProfilePort, onValueChange = { newProfilePort = it.filter(Char::isDigit).take(5) },
+                            label = { Text("Port") }, singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xff3b82f6), unfocusedBorderColor = Color(0xffe2e8f0),
+                                focusedTextColor = Color(0xff1e293b), unfocusedTextColor = Color(0xff1e293b),
+                                focusedLabelColor = Color(0xff3b82f6)
+                            ), modifier = Modifier.width(104.dp)
+                        )
+                    }
+                    OutlinedTextField(
+                        value = newProfilePassword, onValueChange = { newProfilePassword = it },
+                        label = { Text("Password SSH (opsional untuk disimpan nanti)") }, singleLine = true,
+                        visualTransformation = if (newProfilePasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { newProfilePasswordVisible = !newProfilePasswordVisible }) {
+                                Icon(if (newProfilePasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = if (newProfilePasswordVisible) "Sembunyikan password" else "Tampilkan password",
+                                    tint = Color(0xff64748b))
+                            }
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xff3b82f6), unfocusedBorderColor = Color(0xffe2e8f0),
+                            focusedTextColor = Color(0xff1e293b), unfocusedTextColor = Color(0xff1e293b),
+                            focusedLabelColor = Color(0xff3b82f6)
+                        ), modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = canSave,
+                    onClick = {
+                        val saved = viewModel.saveNewProfile(
+                            newProfileName, newProfileHost, newProfilePort, newProfileUser, newProfilePassword, onConfigUpdated
+                        )
+                        if (saved) {
+                            showAddProfileDialog = false
+                            newProfileName = ""; newProfileHost = ""; newProfilePort = "22"
+                            newProfileUser = ""; newProfilePassword = ""; newProfilePasswordVisible = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xff3b82f6), disabledContainerColor = Color(0xffe8edf5),
+                        disabledContentColor = Color(0xff94a3b8)
+                    )
+                ) { Text("Simpan") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddProfileDialog = false }) { Text("Batal", color = Color(0xff64748b)) }
+            }
+        )
     }
 
     if (showBackupPasswordDialog) {
@@ -500,7 +605,7 @@ fun SettingsScreen(
 
                         // Add Profile Button
                         OutlinedButton(
-                            onClick = { viewModel.addNewProfile(onConfigUpdated) },
+                            onClick = { showAddProfileDialog = true },
                             modifier = Modifier.height(36.dp),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = BurntOrange),

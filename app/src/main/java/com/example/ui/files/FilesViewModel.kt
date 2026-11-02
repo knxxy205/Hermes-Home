@@ -32,6 +32,10 @@ data class FilesUiState(
     val isLoading: Boolean = false,
     val isUploading: Boolean = false,
     val uploadingFileName: String? = null,
+    val isDownloading: Boolean = false,
+    val downloadingFileName: String? = null,
+    val transferStatus: String? = null,
+    val transferFailed: Boolean = false,
     val errorMessage: String? = null,
     val statusMessage: String? = null,
     val searchQuery: String = "",
@@ -62,6 +66,10 @@ class FilesViewModel(
 
     fun clearStatusMessage() {
         _uiState.update { it.copy(statusMessage = null) }
+    }
+
+    fun clearTransferStatus() {
+        _uiState.update { it.copy(transferStatus = null, transferFailed = false) }
     }
 
     fun setViewingFile(content: Pair<String, String>?) {
@@ -141,6 +149,8 @@ class FilesViewModel(
             it.copy(
                 isUploading = true,
                 uploadingFileName = "1/$totalCount",
+                transferStatus = null,
+                transferFailed = false,
                 statusMessage = if (totalCount == 1) {
                     val singleName = resolveFileName(context, uris[0])
                     "Mengunggah: $singleName..."
@@ -211,6 +221,12 @@ class FilesViewModel(
                     it.copy(
                         isUploading = false,
                         uploadingFileName = null,
+                        transferStatus = if (failCount == 0) {
+                            "Unggah selesai · $successCount file ke $currentPath"
+                        } else {
+                            "Unggah selesai · $successCount berhasil, $failCount gagal"
+                        },
+                        transferFailed = successCount == 0,
                         statusMessage = when {
                             totalCount == 1 && successCount == 1 -> "File berhasil diunggah."
                             totalCount == 1 && failCount == 1 -> "Gagal mengunggah file."
@@ -363,6 +379,9 @@ class FilesViewModel(
     }
 
     fun downloadFile(item: RemoteFileItem, destFile: File, config: ServerConfig) {
+        _uiState.update {
+            it.copy(isDownloading = true, downloadingFileName = item.name, transferStatus = null, transferFailed = false)
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val result = sftpManager.downloadToLocal(
                 remotePath = item.path,
@@ -371,11 +390,24 @@ class FilesViewModel(
                 useSandbox = !config.isSshConfigured
             )
             withContext(Dispatchers.Main) {
+                _uiState.update { it.copy(isDownloading = false, downloadingFileName = null) }
                 if (result.isSuccess) {
-                    _uiState.update { it.copy(statusMessage = "Disimpan ke: ${destFile.name} (${item.formattedSize})") }
+                    _uiState.update {
+                        it.copy(
+                            transferStatus = "Download selesai · ${destFile.absolutePath}",
+                            transferFailed = false,
+                            statusMessage = "Disimpan ke: ${destFile.name} (${item.formattedSize})"
+                        )
+                    }
                 } else {
                     val err = result.exceptionOrNull()
-                    _uiState.update { it.copy(statusMessage = "Download gagal: ${err?.localizedMessage ?: err?.message}") }
+                    _uiState.update {
+                        it.copy(
+                            transferStatus = "Download gagal · ${err?.localizedMessage ?: err?.message}",
+                            transferFailed = true,
+                            statusMessage = "Download gagal: ${err?.localizedMessage ?: err?.message}"
+                        )
+                    }
                 }
             }
         }
