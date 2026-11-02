@@ -56,7 +56,8 @@ class TerminalView(context: Context) : View(context) {
             val lines = (scrollRemainder / renderer.fontLineSpacing).toInt()
             scrollRemainder -= lines * renderer.fontLineSpacing
             synchronized(engine.lock) {
-            topRow = (topRow - lines).coerceIn(-engine.emulator.screen.activeTranscriptRows, 0)
+                // Dragging down reveals older output; dragging up returns toward live output.
+                topRow = (topRow + lines).coerceIn(-engine.emulator.screen.activeTranscriptRows, 0)
             }
             invalidate()
             return true

@@ -6,6 +6,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NoteAdd
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Search
@@ -105,6 +107,9 @@ import com.example.ui.theme.TerminalRed
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import java.io.File
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.example.data.worker.SftpUploadWorker
 
 @Composable
 fun FilesScreen(
@@ -118,6 +123,32 @@ fun FilesScreen(
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
+    val uploadWorkInfos by remember(context) {
+        WorkManager.getInstance(context).getWorkInfosByTagFlow(SftpUploadWorker.TAG)
+    }.collectAsState(initial = emptyList())
+    val currentUpload = uploadWorkInfos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+        ?: uploadWorkInfos.lastOrNull()
+    val uploadRunning = currentUpload?.state == WorkInfo.State.RUNNING || currentUpload?.state == WorkInfo.State.ENQUEUED
+    LaunchedEffect(currentUpload?.id, currentUpload?.state) {
+        when (currentUpload?.state) {
+            WorkInfo.State.SUCCEEDED -> {
+                val count = currentUpload.outputData.getInt(SftpUploadWorker.KEY_COUNT, 0)
+                val bytes = currentUpload.outputData.getLong(SftpUploadWorker.KEY_DONE_BYTES, 0L)
+                val total = currentUpload.outputData.getLong(SftpUploadWorker.KEY_TOTAL_BYTES, -1L)
+                val path = currentUpload.outputData.getString(SftpUploadWorker.KEY_REMOTE_PATH).orEmpty()
+                val failed = currentUpload.outputData.getInt(SftpUploadWorker.KEY_FAILED, 0)
+                viewModel.reportBackgroundUploadResult("Upload selesai · ${count - failed}/$count berhasil · ${SftpUploadWorker.formatBytes(bytes)}${if (total > 0) " / ${SftpUploadWorker.formatBytes(total)}" else ""} ke $path", failed > 0)
+                viewModel.loadFiles(config = serverConfig)
+            }
+            WorkInfo.State.FAILED -> {
+                val count = currentUpload.outputData.getInt(SftpUploadWorker.KEY_FAILED, 0)
+                val path = currentUpload.outputData.getString(SftpUploadWorker.KEY_REMOTE_PATH).orEmpty()
+                viewModel.reportBackgroundUploadResult("Upload selesai dengan $count file gagal ke $path", true)
+                viewModel.loadFiles(config = serverConfig)
+            }
+            else -> Unit
+        }
+    }
 
     // Dialog states for user input
     var showNewFolderDialog by remember { mutableStateOf(false) }
@@ -164,9 +195,25 @@ fun FilesScreen(
         }
     }
 
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(100)
+    ) { uris ->
+        if (uris.isNotEmpty()) viewModel.uploadMultipleFiles(context.applicationContext, uris, serverConfig)
+    }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+    val ensureUploadNotificationPermission = {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     // Safe launch helper for file picker using SAF OpenMultipleDocuments
     val launchFilePicker = {
         try {
+            ensureUploadNotificationPermission()
             filePickerLauncher.launch(arrayOf("*/*"))
         } catch (e: Exception) {
             Toast.makeText(
@@ -218,7 +265,13 @@ fun FilesScreen(
                 trailingContent = {
                     if (serverConfig.isSshConfigured) Row {
                         IconButton(
-                            onClick = launchFilePicker,
+                            onClick = { ensureUploadNotificationPermission(); photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                            modifier = Modifier.size(48.dp).testTag("upload_photos_button")
+                        ) {
+                            Icon(Icons.Default.PhotoLibrary, "Pilih banyak foto", tint = BurntOrange)
+                        }
+                        IconButton(
+                            onClick = { ensureUploadNotificationPermission(); launchFilePicker() },
                             modifier = Modifier.size(48.dp).testTag("upload_file_button")
                         ) {
                             Icon(
@@ -320,7 +373,7 @@ fun FilesScreen(
             )
 
             // Transfer state: persistent progress while active, concise completion result afterwards.
-            if (uiState.isUploading || uiState.isDownloading || uiState.transferStatus != null) {
+            if (uploadRunning || uiState.isDownloading || uiState.transferStatus != null) {
                 TailHarnessCard(
                     backgroundColor = Color.White,
                     borderColor = Color(0xffe2e8f0),
@@ -330,7 +383,7 @@ fun FilesScreen(
                 ) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (uiState.isUploading || uiState.isDownloading) {
+                            if (uploadRunning || uiState.isDownloading) {
                                 CircularProgressIndicator(color = Color(0xff3b82f6), strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                             } else if (uiState.transferFailed) {
                                 Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = Color(0xffbe123c), modifier = Modifier.size(20.dp))
@@ -340,11 +393,18 @@ fun FilesScreen(
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    uiState.transferStatus ?: if (uiState.isUploading) "Mengunggah ke ${uiState.currentPath}" else "Mengunduh file",
+                                    uiState.transferStatus ?: if (uploadRunning) {
+                                        val fileName = currentUpload?.progress?.getString(SftpUploadWorker.KEY_NAME).orEmpty()
+                                        val index = currentUpload?.progress?.getInt(SftpUploadWorker.KEY_INDEX, 0) ?: 0
+                                        val count = currentUpload?.progress?.getInt(SftpUploadWorker.KEY_COUNT, 0) ?: 0
+                                        val bytes = currentUpload?.progress?.getLong(SftpUploadWorker.KEY_FILE_BYTES, 0L) ?: 0L
+                                        val total = currentUpload?.progress?.getLong(SftpUploadWorker.KEY_FILE_SIZE, -1L) ?: -1L
+                                        "Mengunggah ke ${uiState.currentPath} · $index/$count · $fileName · ${SftpUploadWorker.formatBytes(bytes)}${if (total > 0) " / ${SftpUploadWorker.formatBytes(total)}" else ""}"
+                                    } else "Mengunduh file",
                                     color = Color(0xff1e293b), fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
                                     maxLines = 2, overflow = TextOverflow.Ellipsis
                                 )
-                                (uiState.uploadingFileName ?: uiState.downloadingFileName)?.let {
+                                (if (uploadRunning) "${currentUpload?.progress?.getInt(SftpUploadWorker.KEY_PERCENT, 0) ?: 0}%" else uiState.downloadingFileName)?.let {
                                     Text(it, color = Color(0xff64748b), fontSize = 12.sp, fontFamily = FontFamily.Monospace,
                                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
@@ -355,9 +415,14 @@ fun FilesScreen(
                                 }
                             }
                         }
-                        if (uiState.isUploading || uiState.isDownloading) {
+                        if (uploadRunning || uiState.isDownloading) {
                             Spacer(Modifier.height(10.dp))
-                            LinearProgressIndicator(
+                            val progress = currentUpload?.progress?.getInt(SftpUploadWorker.KEY_PERCENT, 0) ?: 0
+                            if (uploadRunning) LinearProgressIndicator(
+                                progress = { progress / 100f },
+                                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(4.dp)),
+                                color = Color(0xff3b82f6), trackColor = Color(0xffe2e8f0)
+                            ) else LinearProgressIndicator(
                                 modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(4.dp)),
                                 color = Color(0xff3b82f6), trackColor = Color(0xffe2e8f0)
                             )
@@ -518,7 +583,7 @@ fun FilesScreen(
 
         // Floating Action Button for quick upload
         if (serverConfig.isSshConfigured) FloatingActionButton(
-            onClick = launchFilePicker,
+            onClick = { ensureUploadNotificationPermission(); photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(20.dp)

@@ -4,6 +4,7 @@ import com.example.data.model.ServerConfig
 import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Session
+import com.jcraft.jsch.SftpProgressMonitor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
@@ -247,7 +248,9 @@ services:
         fileName: String,
         inputStream: InputStream,
         config: ServerConfig,
-        useSandbox: Boolean = false
+        useSandbox: Boolean = false,
+        totalBytes: Long = -1L,
+        onProgress: (Long) -> Unit = {}
     ): Result<Unit> = withContext(Dispatchers.IO) {
         val targetPath = if (parentPath.endsWith("/")) "$parentPath$fileName" else "$parentPath/$fileName"
         if (useSandbox || !config.isSshConfigured) {
@@ -276,7 +279,19 @@ services:
         try {
             val sftp = getConnectedSftp(config)
             inputStream.use { stream ->
-                sftp.put(stream, targetPath)
+                var uploaded = 0L
+                sftp.put(stream, targetPath, object : SftpProgressMonitor {
+                    override fun init(op: Int, src: String?, dest: String?, max: Long) {
+                        uploaded = 0L
+                        onProgress(0L)
+                    }
+                    override fun count(count: Long): Boolean {
+                        uploaded += count
+                        onProgress(uploaded)
+                        return true
+                    }
+                    override fun end() { onProgress(if (totalBytes >= 0) totalBytes else uploaded) }
+                }, ChannelSftp.OVERWRITE)
             }
             Result.success(Unit)
         } catch (e: Exception) {

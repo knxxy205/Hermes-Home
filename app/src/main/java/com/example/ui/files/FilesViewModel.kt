@@ -23,6 +23,13 @@ import android.graphics.Bitmap
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CancellationException
+import androidx.work.Data
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.workDataOf
+import com.example.data.security.EncryptedStorage
+import com.example.data.worker.SftpUploadWorker
+import org.json.JSONArray
 
 data class ImagePreview(val name: String, val bitmap: Bitmap? = null, val error: String? = null)
 
@@ -70,6 +77,10 @@ class FilesViewModel(
 
     fun clearTransferStatus() {
         _uiState.update { it.copy(transferStatus = null, transferFailed = false) }
+    }
+
+    fun reportBackgroundUploadResult(message: String, failed: Boolean) {
+        _uiState.update { it.copy(transferStatus = message, transferFailed = failed) }
     }
 
     fun setViewingFile(content: Pair<String, String>?) {
@@ -143,101 +154,27 @@ class FilesViewModel(
     ) {
         if (uris.isEmpty()) return
         val currentPath = _uiState.value.currentPath
-        val totalCount = uris.size
-
-        _uiState.update {
-            it.copy(
-                isUploading = true,
-                uploadingFileName = "1/$totalCount",
-                transferStatus = null,
-                transferFailed = false,
-                statusMessage = if (totalCount == 1) {
-                    val singleName = resolveFileName(context, uris[0])
-                    "Mengunggah: $singleName..."
-                } else {
-                    "Mempersiapkan unggahan $totalCount berkas..."
-                }
-            )
+        val queueFile = File(context.filesDir, "sftp-upload-${System.currentTimeMillis()}.json")
+        val queue = JSONArray()
+        uris.forEach { uri ->
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            queue.put(uri.toString())
         }
-
-        viewModelScope.launch(Dispatchers.IO) {
-            var successCount = 0
-            var failCount = 0
-
-            for ((index, uri) in uris.withIndex()) {
-                val currentNum = index + 1
-                val fileName = resolveFileName(context, uri)
-
-                withContext(Dispatchers.Main) {
-                    _uiState.update {
-                        it.copy(
-                            uploadingFileName = if (totalCount > 1) "$fileName ($currentNum/$totalCount)" else fileName,
-                            statusMessage = if (totalCount > 1) {
-                                "Mengunggah ($currentNum/$totalCount): $fileName..."
-                            } else {
-                                "Mengunggah: $fileName..."
-                            }
-                        )
-                    }
-                }
-
-                var inputStream: InputStream? = null
-                try {
-                    inputStream = try {
-                        context.contentResolver.openInputStream(uri)
-                    } catch (e: Exception) {
-                        null
-                    }
-
-                    if (inputStream == null) {
-                        failCount++
-                        continue
-                    }
-
-                    val result = sftpManager.uploadFile(
-                        parentPath = currentPath,
-                        fileName = fileName,
-                        inputStream = inputStream,
-                        config = config,
-                        useSandbox = !config.isSshConfigured
-                    )
-
-                    if (result.isSuccess) {
-                        successCount++
-                    } else {
-                        failCount++
-                    }
-                } catch (e: Exception) {
-                    failCount++
-                } finally {
-                    try {
-                        inputStream?.close()
-                    } catch (_: Exception) {}
-                }
-            }
-
-            withContext(Dispatchers.Main) {
-                _uiState.update {
-                    it.copy(
-                        isUploading = false,
-                        uploadingFileName = null,
-                        transferStatus = if (failCount == 0) {
-                            "Unggah selesai · $successCount file ke $currentPath"
-                        } else {
-                            "Unggah selesai · $successCount berhasil, $failCount gagal"
-                        },
-                        transferFailed = successCount == 0,
-                        statusMessage = when {
-                            totalCount == 1 && successCount == 1 -> "File berhasil diunggah."
-                            totalCount == 1 && failCount == 1 -> "Gagal mengunggah file."
-                            failCount == 0 -> "Berhasil mengunggah $successCount berkas."
-                            successCount == 0 -> "Gagal mengunggah seluruh berkas ($failCount berkas)."
-                            else -> "Unggahan selesai: $successCount berhasil, $failCount gagal."
-                        }
-                    )
-                }
-                loadFiles(currentPath, config)
-            }
+        queueFile.writeText(queue.toString())
+        val profileId = EncryptedStorage(context).getActiveProfileId()
+        val request = OneTimeWorkRequestBuilder<SftpUploadWorker>()
+            .setInputData(workDataOf(
+                SftpUploadWorker.KEY_QUEUE to queueFile.absolutePath,
+                SftpUploadWorker.KEY_PROFILE to profileId,
+                SftpUploadWorker.KEY_REMOTE_PATH to currentPath
+            ))
+            .addTag(SftpUploadWorker.TAG)
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "sftp_upload_queue", androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE, request
+        )
+        _uiState.update {
+            it.copy(transferStatus = null, transferFailed = false, statusMessage = "Antrean upload berjalan di latar belakang (${uris.size} file).")
         }
     }
 

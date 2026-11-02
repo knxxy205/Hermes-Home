@@ -6,10 +6,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.fragment.app.FragmentActivity
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,13 +26,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -44,7 +40,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.DisposableEffect
@@ -67,8 +65,8 @@ import androidx.activity.SystemBarStyle
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -135,8 +133,6 @@ class MainActivity : FragmentActivity() {
 @Composable
 fun TailHarnessApp(activity: FragmentActivity? = null) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-
     var isVaultUnlocked by remember { mutableStateOf(false) }
     var backgroundAt by remember { mutableStateOf(0L) }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -149,89 +145,32 @@ fun TailHarnessApp(activity: FragmentActivity? = null) {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-
-    // Auto-prompt biometric authentication on startup if activity is present
     LaunchedEffect(activity) {
         if (activity != null && !isVaultUnlocked) {
-            BiometricAuthHelper.showBiometricPrompt(
-                activity = activity,
-                onSuccess = {
-                    isVaultUnlocked = true
-                },
-                onError = { err ->
-                    // Keep lock screen visible so user can retry or use PIN
-                }
-            )
+            BiometricAuthHelper.showBiometricPrompt(activity, onSuccess = { isVaultUnlocked = true }, onError = {})
         }
     }
-
-    AnimatedContent(
-        targetState = isVaultUnlocked,
-        transitionSpec = { fadeIn() togetherWith fadeOut() },
-        label = "vault_auth_transition"
-    ) { unlocked ->
-        if (!unlocked) {
-            VaultLockScreen(
-                onUnlockRequested = {
-                    if (activity != null) {
-                        BiometricAuthHelper.showBiometricPrompt(
-                            activity = activity,
-                            onSuccess = { isVaultUnlocked = true },
-                            onError = { errMsg ->
-                                Toast.makeText(context, errMsg, Toast.LENGTH_SHORT).show()
-                            }
-                        )
-                    } else {
-                        // Fallback in previews or non-activity contexts
-                        isVaultUnlocked = true
-                    }
-                }
+    if (isVaultUnlocked) MainContentScreen() else VaultLockScreen {
+            if (activity == null) isVaultUnlocked = true
+            else BiometricAuthHelper.showBiometricPrompt(
+                activity,
+                onSuccess = { isVaultUnlocked = true },
+                onError = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
             )
-        } else {
-            MainContentScreen()
-        }
     }
 }
 
 @Composable
-fun VaultLockScreen(
-    onUnlockRequested: () -> Unit
-) {
+fun VaultLockScreen(onUnlockRequested: () -> Unit) {
     val context = LocalContext.current
-    val encryptedStorage = remember { EncryptedStorage(context) }
-    val serverConfig = remember { encryptedStorage.loadConfig() }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(NavyDarkBackground)
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            // Shield & Fingerprint Visual Emblem
-            Box(
-                modifier = Modifier
-                    .size(96.dp)
-                    .clip(RoundedCornerShape(32.dp))
-                    .background(BurntOrangeBadgeBg)
-                    .border(1.dp, BurntOrangeBorder, RoundedCornerShape(32.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Fingerprint,
-                    contentDescription = "Biometric Vault",
-                    tint = BurntOrange,
-                    modifier = Modifier.size(54.dp)
-                )
+    val config = remember { EncryptedStorage(context).loadConfig() }
+    Box(Modifier.fillMaxSize().background(NavyDarkBackground).padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Box(Modifier.size(96.dp).clip(RoundedCornerShape(32.dp)).background(BurntOrangeBadgeBg)
+                .border(1.dp, BurntOrangeBorder, RoundedCornerShape(32.dp)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Fingerprint, "Biometric Vault", tint = BurntOrange, modifier = Modifier.size(54.dp))
             }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
+            Spacer(Modifier.height(24.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(76.dp).clip(RoundedCornerShape(20.dp)).background(BurntOrange)) {
                     Image(painterResource(R.drawable.homeserver_mark), "Homeserver Remote", Modifier.fillMaxSize())
@@ -242,70 +181,23 @@ fun VaultLockScreen(
                     Text("Remote", color = BurntOrange, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp)
                 }
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Server pribadi, dalam genggaman. Buka dengan sidik jari atau PIN perangkat untuk melanjutkan.",
-                color = TextSecondary,
-                fontSize = 13.sp,
-                lineHeight = 19.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Target Node Card Indicator
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(NavyDarkCard)
-                    .border(1.dp, NavyDarkBorder, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Security,
-                    contentDescription = null,
-                    tint = TerminalGreen,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = if (serverConfig.isSshConfigured) serverConfig.sshHost else "Koneksi privat melalui Tailscale",
-                    color = TextPrimary,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace
-                )
+            Spacer(Modifier.height(8.dp))
+            Text("Server pribadi, dalam genggaman. Buka dengan sidik jari atau PIN perangkat untuk melanjutkan.",
+                color = TextSecondary, fontSize = 13.sp, lineHeight = 19.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 16.dp))
+            Spacer(Modifier.height(24.dp))
+            Row(Modifier.clip(RoundedCornerShape(12.dp)).background(NavyDarkCard).border(1.dp, NavyDarkBorder, RoundedCornerShape(12.dp))
+                .padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Security, null, tint = TerminalGreen, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (config.isSshConfigured) config.sshHost else "Koneksi privat melalui Tailscale", color = TextPrimary,
+                    fontSize = 12.sp, fontFamily = FontFamily.Monospace)
             }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            Button(
-                onClick = onUnlockRequested,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-                    .testTag("unlock_vault_button"),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = BurntOrange,
-                    contentColor = Color.White
-                )
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Buka homeserver",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
+            Spacer(Modifier.height(32.dp))
+            Button(onClick = onUnlockRequested, modifier = Modifier.fillMaxWidth().height(50.dp).testTag("unlock_vault_button"),
+                shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = Color.White)) {
+                Icon(Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Buka homeserver", fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }
         }
     }

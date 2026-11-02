@@ -248,12 +248,17 @@ fun HermesChatScreen(
 
     val slashCommands = remember {
         listOf(
-            "/model" to "Pilih model 9router",
-            "/history" to "Riwayat & sesi chat",
-            "/status" to "Cek status & profil",
-            "/profile" to "Ganti profil jaringan",
-            "/help" to "Bantuan perintah",
-            "/clear" to "Bersihkan chat"
+            "/model" to "Deteksi atau ganti model",
+            "/models" to "Alias untuk /model",
+            "/history" to "Riwayat percakapan",
+            "/sesi" to "Alias untuk /history",
+            "/status" to "Status koneksi dan model",
+            "/profile" to "Pilih profil jaringan",
+            "/profiles" to "Alias untuk /profile",
+            "/help" to "Daftar perintah",
+            "/start" to "Alias untuk /help",
+            "/clear" to "Bersihkan obrolan",
+            "/reset" to "Alias untuk /clear"
         )
     }
 
