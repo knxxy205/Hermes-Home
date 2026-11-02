@@ -186,7 +186,7 @@ fun VaultLockScreen(onUnlockRequested: () -> Unit) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(76.dp).clip(RoundedCornerShape(20.dp)).background(BurntOrange)) {
-                    Image(painterResource(R.drawable.homeserver_mark), "Homeserver Remote", Modifier.fillMaxSize())
+                    Image(painterResource(R.drawable.homeserver_mark), "Hermes Home", Modifier.fillMaxSize())
                 }
                 Spacer(Modifier.width(16.dp))
                 Column {

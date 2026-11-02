@@ -14,5 +14,5 @@ is GPL-3.0-only, with Apache-2.0 exceptions for Android Terminal Emulator code.
 Full license texts are included alongside this notice.
 
 Corresponding app source and build instructions:
-https://github.com/knxxy205/TailHarness
+https://github.com/knxxy205/Hermes-Home
 Each APK release links to its matching source commit/archive.

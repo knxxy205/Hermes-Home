@@ -1,6 +1,6 @@
-# TailHarness
+# Hermes Home
 
-TailHarness is a native Android app for managing your own homeserver from your phone. It brings an SSH terminal, an SFTP file manager, and a chat interface for a self-hosted Hermes Agent together in one app.
+Hermes Home is a native Android app for managing your own homeserver from your phone. It brings an SSH terminal, an SFTP file manager, and a chat interface for a self-hosted Hermes Agent together in one app.
 
 The app is designed for private networks such as Tailscale. Keep SSH and Hermes services on your private network instead of exposing them directly to the public internet.
 
@@ -24,14 +24,14 @@ The app is designed for private networks such as Tailscale. Keep SSH and Hermes 
 
 ## Getting started
 
-1. Install TailHarness on your Android device.
+1. Install Hermes Home on your Android device.
 2. Connect the device and homeserver to the same private network.
 3. Open **Settings** and enter the server's SSH host, port, username, and password.
 4. Confirm the SSH host key when prompted. A changed host key is rejected until you investigate and resolve the change.
 5. Optionally configure the Hermes base URL, model, and API key. Use HTTPS for public hosts; HTTP is accepted for local or private network hosts.
 6. Open **Terminal**, **Files**, or **Hermes** to use the configured services.
 
-TailHarness does not provide a hosted server or Hermes service. You operate and secure those services yourself.
+Hermes Home does not provide a hosted server or Hermes service. You operate and secure those services yourself.
 
 ## Build from source
 
@@ -58,4 +58,4 @@ Terminal emulator and renderer sources are based on Termux v0.118.0 and are incl
 
 ## License
 
-See the notices and license texts in `app/src/main/assets/licenses` for third-party components. Check the repository's license files for the terms applicable to TailHarness itself.
+See the notices and license texts in `app/src/main/assets/licenses` for third-party components. Check the repository's license files for the terms applicable to Hermes Home itself.

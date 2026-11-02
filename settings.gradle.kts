@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "TailHarness"
+rootProject.name = "HermesHome"
 
 include(":app")

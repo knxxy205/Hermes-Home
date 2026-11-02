@@ -179,7 +179,7 @@ class SftpUploadWorker(context: Context, params: WorkerParameters) : CoroutineWo
         }
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setContentTitle("TailHarness · Upload")
+            .setContentTitle("Hermes Home · Upload")
             .setContentText(text)
             .setOngoing(max > 0)
             .setOnlyAlertOnce(true)
