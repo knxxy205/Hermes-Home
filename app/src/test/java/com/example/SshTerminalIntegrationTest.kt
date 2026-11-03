@@ -17,11 +17,10 @@ import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @OptIn(ExperimentalCoroutinesApi::class)
-@RunWith(RobolectricTestRunner::class)
+@RunWith(SshAwareRobolectricTestRunner::class)
 @Config(sdk = [34])
 class SshTerminalIntegrationTest {
     @Test fun nativeImeTypingResizeAndReconnectKeepSshUsable() = runBlocking {

@@ -9,7 +9,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.model.ServerConfig
 import com.example.data.sftp.RemoteFileItem
 import com.example.data.sftp.SftpManager
+import com.example.data.sftp.DownloadDestination
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,15 +40,19 @@ data class FilesUiState(
     val currentPath: String = "/",
     val files: List<RemoteFileItem> = emptyList(),
     val isLoading: Boolean = false,
+    val isSearching: Boolean = false,
     val isUploading: Boolean = false,
     val uploadingFileName: String? = null,
     val isDownloading: Boolean = false,
+    val isChoosingDownloadFolder: Boolean = false,
+    val isDeleting: Boolean = false,
     val downloadingFileName: String? = null,
     val transferStatus: String? = null,
     val transferFailed: Boolean = false,
     val errorMessage: String? = null,
     val statusMessage: String? = null,
     val searchQuery: String = "",
+    val searchNotice: String? = null,
     val viewingFileContent: Pair<String, String>? = null,
     val imagePreview: ImagePreview? = null
 )
@@ -58,7 +64,10 @@ class FilesViewModel(
     private val _uiState = MutableStateFlow(FilesUiState())
     val uiState: StateFlow<FilesUiState> = _uiState.asStateFlow()
     private var previewJob: Job? = null
-    private var searchJob: Job? = null
+    private var listingJob: Job? = null
+    @Volatile private var listingGeneration = 0
+    private data class DirectorySnapshot(val path: String, val config: ServerConfig, val files: List<RemoteFileItem>)
+    private var directorySnapshot: DirectorySnapshot? = null
     private var previewGeneration = 0
 
     fun closeImagePreview() {
@@ -71,17 +80,20 @@ class FilesViewModel(
 
     fun updateSearchQuery(query: String) {
         _uiState.update { it.copy(searchQuery = query) }
-        searchJob?.cancel()
-        val currentPath = _uiState.value.currentPath
-        val config = _lastConfig ?: return
-        if (query.isBlank()) {
-            loadFiles(currentPath, config)
+        val config = lastConfig ?: return
+        val snapshot = directorySnapshot
+        if (query.isBlank() && snapshot != null && snapshot.path == _uiState.value.currentPath && snapshot.config == config) {
+            listingGeneration++
+            listingJob?.cancel()
+            _uiState.update {
+                it.copy(files = snapshot.files, isLoading = false, isSearching = false, errorMessage = null, searchNotice = null)
+            }
         } else {
-            searchFiles(currentPath, query, _lastConfig ?: return)
+            loadFiles(config = config)
         }
     }
 
-    private var _lastConfig: ServerConfig? = null
+    private var lastConfig: ServerConfig? = null
 
     fun clearStatusMessage() {
         _uiState.update { it.copy(statusMessage = null) }
@@ -100,7 +112,6 @@ class FilesViewModel(
     }
 
     fun navigateTo(path: String, config: ServerConfig) {
-        searchJob?.cancel()
         _uiState.update { it.copy(currentPath = path, searchQuery = "") }
         loadFiles(path, config)
     }
@@ -124,61 +135,62 @@ class FilesViewModel(
     fun currentRemotePath(): String = _uiState.value.currentPath
 
     fun loadFiles(path: String = _uiState.value.currentPath, config: ServerConfig) {
-        _lastConfig = config
-        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = sftpManager.listFiles(
-                currentPath = path,
-                config = config,
-                useSandbox = !config.isSshConfigured
-            )
-            withContext(Dispatchers.Main) {
-                if (result.isSuccess) {
-                    val list = result.getOrNull() ?: emptyList()
-                    _uiState.update {
-                        it.copy(
-                            files = list,
-                            isLoading = false,
-                            errorMessage = null
-                        )
-                    }
-                } else {
-                    val error = result.exceptionOrNull()
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            errorMessage = error?.localizedMessage ?: "Gagal memuat daftar file SFTP"
-                        )
+        if (path != _uiState.value.currentPath) return
+        val profileChanged = lastConfig != null && lastConfig != config
+        lastConfig = config
+        listingJob?.cancel()
+        val generation = ++listingGeneration
+        val query = if (profileChanged) "" else _uiState.value.searchQuery
+        _uiState.update {
+            it.copy(isLoading = query.isBlank(), isSearching = query.isNotBlank(), errorMessage = null,
+                searchNotice = null, files = emptyList(), searchQuery = query)
+        }
+        listingJob = viewModelScope.launch {
+            // Each request owns its channel, so an old blocking SFTP call cannot corrupt a new search.
+            val manager = if (config.isSshConfigured) SftpManager() else sftpManager
+            try {
+                if (query.isNotBlank()) kotlinx.coroutines.delay(300)
+                val (files, notice) = withContext(Dispatchers.IO) {
+                    if (query.isBlank()) manager.listFiles(path, config).getOrThrow() to null else {
+                        val result = manager.searchFiles(path, query, config, onProgress = { partial ->
+                            _uiState.update { if (generation == listingGeneration) it.copy(files = partial.files) else it }
+                        }).getOrThrow()
+                        val warnings = buildList {
+                            if (result.skippedFolders > 0) add("${result.skippedFolders} folder tidak dapat dibaca")
+                            if (result.limited) add("Hasil sebagian: batas waktu atau pencarian tercapai. Cari dari folder yang lebih spesifik.")
+                        }
+                        result.files to warnings.takeIf { it.isNotEmpty() }?.joinToString(" · ")
                     }
                 }
+                ensureActive()
+                if (query.isBlank() && generation == listingGeneration) directorySnapshot = DirectorySnapshot(path, config, files)
+                if (generation == listingGeneration) _uiState.update {
+                    it.copy(files = files, isLoading = false, isSearching = false, searchNotice = notice)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (generation == listingGeneration) _uiState.update {
+                    it.copy(isLoading = false, isSearching = false, errorMessage = e.localizedMessage ?: "Gagal memuat file")
+                }
+            } finally {
+                if (manager !== sftpManager) withContext(NonCancellable + Dispatchers.IO) { manager.close() }
             }
         }
     }
 
-    private fun searchFiles(path: String, query: String, config: ServerConfig) {
-        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-        searchJob = viewModelScope.launch(Dispatchers.IO) {
-            kotlinx.coroutines.delay(250)
-            val result = sftpManager.searchFiles(
-                rootPath = path,
-                query = query,
-                config = config,
-                useSandbox = !config.isSshConfigured
-            )
-            withContext(Dispatchers.Main) {
-                if (result.isSuccess) {
-                    _uiState.update {
-                        it.copy(files = result.getOrNull().orEmpty(), isLoading = false, errorMessage = null)
-                    }
-                } else {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            errorMessage = result.exceptionOrNull()?.localizedMessage ?: "Gagal mencari file"
-                        )
-                    }
-                }
-            }
+    fun stopSearch() {
+        listingGeneration++
+        listingJob?.cancel()
+        _uiState.update {
+            it.copy(isSearching = false, searchNotice = "Pencarian dihentikan. Hasil yang ditampilkan belum lengkap.")
+        }
+    }
+
+    private fun refreshAfterMutation(path: String, config: ServerConfig) {
+        if (lastConfig == config) {
+            directorySnapshot = null
+            if (_uiState.value.currentPath == path) loadFiles(path, config)
         }
     }
 
@@ -248,7 +260,7 @@ class FilesViewModel(
             withContext(Dispatchers.Main) {
                 if (result.isSuccess) {
                     _uiState.update { it.copy(statusMessage = "Folder '$name' dibuat") }
-                    loadFiles(currentPath, config)
+                    refreshAfterMutation(currentPath, config)
                 } else {
                     val err = result.exceptionOrNull()
                     _uiState.update { it.copy(statusMessage = "Gagal membuat folder: ${err?.localizedMessage ?: err?.message}") }
@@ -271,7 +283,7 @@ class FilesViewModel(
             withContext(Dispatchers.Main) {
                 if (result.isSuccess) {
                     _uiState.update { it.copy(statusMessage = "File '$name' dibuat") }
-                    loadFiles(currentPath, config)
+                    refreshAfterMutation(currentPath, config)
                 } else {
                     val err = result.exceptionOrNull()
                     _uiState.update { it.copy(statusMessage = "Gagal membuat file: ${err?.localizedMessage ?: err?.message}") }
@@ -293,7 +305,7 @@ class FilesViewModel(
             withContext(Dispatchers.Main) {
                 if (result.isSuccess) {
                     _uiState.update { it.copy(statusMessage = "Nama diubah menjadi '$newName'") }
-                    loadFiles(currentPath, config)
+                    refreshAfterMutation(currentPath, config)
                 } else {
                     val err = result.exceptionOrNull()
                     _uiState.update { it.copy(statusMessage = "Gagal mengubah nama: ${err?.localizedMessage ?: err?.message}") }
@@ -303,24 +315,7 @@ class FilesViewModel(
     }
 
     fun deleteItem(item: RemoteFileItem, config: ServerConfig) {
-        val currentPath = _uiState.value.currentPath
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = sftpManager.delete(
-                path = item.path,
-                isDirectory = item.isDirectory,
-                config = config,
-                useSandbox = !config.isSshConfigured
-            )
-            withContext(Dispatchers.Main) {
-                if (result.isSuccess) {
-                    _uiState.update { it.copy(statusMessage = "'${item.name}' dihapus") }
-                    loadFiles(currentPath, config)
-                } else {
-                    val err = result.exceptionOrNull()
-                    _uiState.update { it.copy(statusMessage = "Gagal menghapus: ${err?.localizedMessage ?: err?.message}") }
-                }
-            }
-        }
+        deleteItems(listOf(item), config)
     }
 
     fun readFile(item: RemoteFileItem, config: ServerConfig, cacheDir: File) {
@@ -372,101 +367,95 @@ class FilesViewModel(
         }
     }
 
-    fun downloadFile(item: RemoteFileItem, destFile: File, config: ServerConfig) {
-        _uiState.update {
-            it.copy(isDownloading = true, downloadingFileName = item.name, transferStatus = null, transferFailed = false)
-        }
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = sftpManager.downloadToLocal(
-                remotePath = item.path,
-                targetFile = destFile,
-                config = config,
-                useSandbox = !config.isSshConfigured
-            )
-            withContext(Dispatchers.Main) {
-                _uiState.update { it.copy(isDownloading = false, downloadingFileName = null) }
-                if (result.isSuccess) {
-                    _uiState.update {
-                        it.copy(
-                            transferStatus = "Download selesai · ${destFile.absolutePath}",
-                            transferFailed = false,
-                            statusMessage = "Disimpan ke: ${destFile.name} (${item.formattedSize})"
-                        )
-                    }
-                } else {
-                    val err = result.exceptionOrNull()
-                    _uiState.update {
-                        it.copy(
-                            transferStatus = "Download gagal · ${err?.localizedMessage ?: err?.message}",
-                            transferFailed = true,
-                            statusMessage = "Download gagal: ${err?.localizedMessage ?: err?.message}"
-                        )
-                    }
-                }
-            }
-        }
+    private data class PendingDownload(val files: List<RemoteFileItem>, val config: ServerConfig)
+    private var pendingDownload: PendingDownload? = null
+
+    fun prepareDownload(items: List<RemoteFileItem>, config: ServerConfig): Boolean {
+        if (_uiState.value.isDownloading || pendingDownload != null) return false
+        if (items.isEmpty() || items.any { it.isDirectory }) return false
+        val files = items.distinctBy { it.path }
+        pendingDownload = PendingDownload(files.toList(), config)
+        _uiState.update { it.copy(isChoosingDownloadFolder = true) }
+        return true
     }
 
-    fun downloadFiles(items: List<RemoteFileItem>, cacheDir: File, config: ServerConfig) {
-        val files = items.filterNot { it.isDirectory }
-        if (files.isEmpty()) {
-            _uiState.update { it.copy(statusMessage = "Tidak ada file yang bisa di-download") }
-            return
-        }
+    fun cancelDownloadPicker() {
+        pendingDownload = null
+        _uiState.update { it.copy(isChoosingDownloadFolder = false) }
+    }
+
+    fun completeDownload(context: Context, destination: Uri?) {
+        val batch = pendingDownload ?: return
+        cancelDownloadPicker()
+        if (destination == null) return
         _uiState.update {
             it.copy(
                 isDownloading = true,
-                downloadingFileName = "${files.size} file",
+                downloadingFileName = "${batch.files.size} file",
                 transferStatus = null,
                 transferFailed = false
             )
         }
+        val resolver = context.applicationContext.contentResolver
         viewModelScope.launch(Dispatchers.IO) {
+            val manager = if (batch.config.isSshConfigured) SftpManager() else sftpManager
+            val target = DownloadDestination(resolver, destination)
             var completed = 0
             val failures = mutableListOf<String>()
-            files.forEach { item ->
-                val result = sftpManager.downloadToLocal(
-                    remotePath = item.path,
-                    targetFile = File(cacheDir, item.name),
-                    config = config,
-                    useSandbox = !config.isSshConfigured
-                )
-                if (result.isSuccess) completed++ else failures += item.name
-            }
-            withContext(Dispatchers.Main) {
-                _uiState.update {
-                    it.copy(
-                        isDownloading = false,
-                        downloadingFileName = null,
-                        transferStatus = if (failures.isEmpty()) {
-                            "Download selesai · $completed file disimpan di cache aplikasi"
-                        } else {
-                            "Download selesai · $completed berhasil, ${failures.size} gagal"
-                        },
-                        transferFailed = failures.isNotEmpty(),
-                        statusMessage = failures.takeIf { it.isNotEmpty() }?.let { names ->
-                            "Gagal: ${names.joinToString(", ")}"
+            try {
+                batch.files.forEachIndexed { index, item ->
+                    ensureActive()
+                    _uiState.update { it.copy(downloadingFileName = "${index + 1}/${batch.files.size} · ${item.name}") }
+                    try {
+                        target.save(item.name) { output ->
+                            manager.downloadToStream(item.path, output, batch.config).getOrThrow()
                         }
-                    )
+                        completed++
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        failures += "${item.path}: ${e.localizedMessage ?: "Download gagal"}"
+                        manager.close()
+                    }
                 }
+            } finally {
+                if (manager !== sftpManager) manager.close()
+                _uiState.update { it.copy(isDownloading = false, downloadingFileName = null) }
+            }
+            _uiState.update {
+                it.copy(
+                    transferStatus = "Download selesai · $completed/${batch.files.size} file tersimpan di folder pilihan" +
+                        if (failures.isNotEmpty()) " · ${failures.size} gagal" else "",
+                    transferFailed = failures.isNotEmpty(),
+                    statusMessage = failures.takeIf { it.isNotEmpty() }?.take(3)?.joinToString("\n")
+                )
             }
         }
     }
 
     fun deleteItems(items: List<RemoteFileItem>, config: ServerConfig) {
-        if (items.isEmpty()) return
+        if (items.isEmpty() || _uiState.value.isDeleting) return
         val currentPath = _uiState.value.currentPath
+        _uiState.update { it.copy(isDeleting = true) }
         viewModelScope.launch(Dispatchers.IO) {
+            val manager = if (config.isSshConfigured) SftpManager() else sftpManager
             var completed = 0
             val failures = mutableListOf<String>()
-            items.forEach { item ->
-                val result = sftpManager.delete(
-                    path = item.path,
-                    isDirectory = item.isDirectory,
-                    config = config,
-                    useSandbox = !config.isSshConfigured
-                )
-                if (result.isSuccess) completed++ else failures += item.name
+            try {
+                // Children first when search results include a folder and a file within it.
+                items.distinctBy { it.path }.sortedByDescending { it.path.count { c -> c == '/' } }.forEach { item ->
+                    ensureActive()
+                    val result = manager.delete(
+                        path = item.path,
+                        isDirectory = item.isDirectory,
+                        config = config,
+                        useSandbox = !config.isSshConfigured
+                    )
+                    if (result.isSuccess) completed++ else failures += item.path
+                }
+            } finally {
+                if (manager !== sftpManager) manager.close()
+                _uiState.update { it.copy(isDeleting = false) }
             }
             withContext(Dispatchers.Main) {
                 _uiState.update {
@@ -478,7 +467,7 @@ class FilesViewModel(
                         }
                     )
                 }
-                loadFiles(currentPath, config)
+                if (completed > 0) refreshAfterMutation(currentPath, config)
             }
         }
     }

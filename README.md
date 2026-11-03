@@ -8,6 +8,9 @@ The app is designed for private networks such as Tailscale. Keep SSH and Hermes 
 
 - **SSH terminal** with an interactive terminal emulator and host key confirmation.
 - **SFTP file manager** to browse folders, create folders and files, upload and download files, preview supported files, rename, and delete.
+- **Multi-select and recursive search** with file paths in results and a stop button for searches.
+- **Downloads to a folder you choose** using Android's folder picker, with numbered filenames when a name is already in use.
+- **File information** with full filenames, paths, extensions, sizes, modification times, and permissions. Extension badges stay visible beside long filenames.
 - **Background uploads** that keep the destination folder with each queued batch.
 - **Hermes chat** for an OpenAI-compatible, self-hosted Hermes Agent endpoint.
 - **Connection profiles** for switching between server configurations.
@@ -32,6 +35,15 @@ The app is designed for private networks such as Tailscale. Keep SSH and Hermes 
 6. Open **Terminal**, **Files**, or **Hermes** to use the configured services.
 
 Hermes Home does not provide a hosted server or Hermes service. You operate and secure those services yourself.
+
+## Beta limitations
+
+- Download currently supports files; folders must be downloaded file by file. Only empty folders can be deleted.
+- Downloads run while the app process is alive. They do not resume automatically after Android kills the app. Existing files in the destination folder are preserved; a failed transfer attempts to remove its partial file.
+- Search covers the current remote folder and its subfolders. It does not follow symbolic links to directories. Searches stop at 5,000 results, 10,000 scanned folders, 64 levels, or a 20-second scan budget. A blocked network request can extend that time up to the connection timeout. The app labels partial results and folders it could not read.
+- Cancelling search restores the last successfully loaded directory listing. Use Refresh to check for server changes.
+
+See [the Files beta test guide](docs/files-beta-testing.md) before distributing a beta build.
 
 ## Build from source
 

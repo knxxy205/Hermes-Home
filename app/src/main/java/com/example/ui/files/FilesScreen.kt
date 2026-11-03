@@ -11,6 +11,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +45,7 @@ import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SaveAlt
@@ -51,6 +55,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -77,6 +82,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import com.example.ui.theme.FolderBlue
 import com.example.ui.theme.FolderPeach
 import com.example.ui.theme.FolderRose
@@ -107,7 +113,6 @@ import com.example.ui.theme.TerminalGreen
 import com.example.ui.theme.TerminalRed
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
-import java.io.File
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.example.data.worker.SftpUploadWorker
@@ -174,10 +179,20 @@ fun FilesScreen(
     var renameNewName by remember { mutableStateOf("") }
 
     var itemToDelete by remember { mutableStateOf<RemoteFileItem?>(null) }
+    var itemToInspect by remember { mutableStateOf<RemoteFileItem?>(null) }
     var itemsToDelete by remember { mutableStateOf<List<RemoteFileItem>?>(null) }
     var selectedPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
 
-    LaunchedEffect(uiState.currentPath) { selectedPaths = emptySet() }
+    LaunchedEffect(uiState.currentPath, uiState.searchQuery, serverConfig) {
+        selectedPaths = emptySet()
+        itemToDelete = null
+        itemsToDelete = null
+        itemToRename = null
+        itemToInspect = null
+    }
+    LaunchedEffect(uiState.files) {
+        selectedPaths = selectedPaths.intersect(uiState.files.map { it.path }.toSet())
+    }
     val selectedItems = remember(uiState.files, selectedPaths) {
         uiState.files.filter { it.path in selectedPaths }
     }
@@ -193,17 +208,20 @@ fun FilesScreen(
     // 2. If in a sub-directory, navigate up to parent folder.
     // 3. When at root directory ("/") and no dialog is open, BackHandler is disabled, allowing default system back behavior (closing tab/app).
     val canNavigateUp = viewModel.canNavigateUp()
-    val isAnyOverlayOpen = selectedPaths.isNotEmpty() || uiState.imagePreview != null || uiState.viewingFileContent != null || showNewFolderDialog || showNewFileDialog || itemToRename != null || itemToDelete != null || itemsToDelete != null
+    val isAnyOverlayOpen = itemToInspect != null || uiState.searchQuery.isNotBlank() || selectedPaths.isNotEmpty() || uiState.imagePreview != null || uiState.viewingFileContent != null || showNewFolderDialog || showNewFileDialog || itemToRename != null || itemToDelete != null || itemsToDelete != null
 
     BackHandler(enabled = isTabActive && (canNavigateUp || isAnyOverlayOpen)) {
         when {
             showNewFolderDialog -> showNewFolderDialog = false
             showNewFileDialog -> showNewFileDialog = false
+            itemsToDelete != null -> itemsToDelete = null
+            itemToInspect != null -> itemToInspect = null
             selectedPaths.isNotEmpty() -> selectedPaths = emptySet()
             itemToRename != null -> itemToRename = null
             itemToDelete != null -> itemToDelete = null
             uiState.imagePreview != null -> viewModel.closeImagePreview()
             uiState.viewingFileContent != null -> viewModel.setViewingFile(null)
+            uiState.searchQuery.isNotBlank() -> viewModel.updateSearchQuery("")
             canNavigateUp -> viewModel.navigateUp(serverConfig)
         }
     }
@@ -220,6 +238,21 @@ fun FilesScreen(
                 config = serverConfig,
                 destinationPath = uploadDestinationPath
             )
+        }
+    }
+
+    val downloadFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        viewModel.completeDownload(context.applicationContext, uri)
+        if (uri != null) selectedPaths = emptySet()
+    }
+    val chooseDownloadFolder: (List<RemoteFileItem>) -> Unit = { items ->
+        if (viewModel.prepareDownload(items, serverConfig)) {
+            try {
+                downloadFolderLauncher.launch(null)
+            } catch (e: Exception) {
+                viewModel.cancelDownloadPicker()
+                Toast.makeText(context, "Tidak dapat membuka pemilih folder: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -267,10 +300,7 @@ fun FilesScreen(
         viewModel.loadFiles(config = serverConfig)
     }
 
-    val filteredList = remember(uiState.files, uiState.searchQuery) {
-        if (uiState.searchQuery.isBlank()) uiState.files
-        else uiState.files.filter { it.name.contains(uiState.searchQuery, ignoreCase = true) }
-    }
+    val filteredList = uiState.files
 
     Box(
         modifier = modifier
@@ -338,16 +368,20 @@ fun FilesScreen(
                     Text("${selectedItems.size} dipilih", color = Color(0xff1e3a8a), fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(
                         onClick = {
-                            viewModel.downloadFiles(selectedItems, context.cacheDir, serverConfig)
-                            selectedPaths = emptySet()
+                            chooseDownloadFolder(selectedItems)
                         },
-                        enabled = selectedItems.any { !it.isDirectory }
+                        enabled = selectedItems.isNotEmpty() && selectedItems.none { it.isDirectory } &&
+                            !uiState.isDownloading && !uiState.isChoosingDownloadFolder
                     ) {
                         Icon(Icons.Default.SaveAlt, "Download pilihan", tint = Color(0xff1d4ed8))
                     }
-                    IconButton(onClick = { itemsToDelete = selectedItems }) {
+                    IconButton(onClick = { itemsToDelete = selectedItems }, enabled = selectedItems.isNotEmpty() && !uiState.isDeleting) {
                         Icon(Icons.Default.Delete, "Hapus pilihan", tint = TerminalRed)
                     }
+                }
+                if (selectedItems.any { it.isDirectory }) {
+                    Text("Download hanya untuk file. Batalkan pilihan folder untuk mengunduh.",
+                        color = TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp))
                 }
             }
 
@@ -399,7 +433,12 @@ fun FilesScreen(
             OutlinedTextField(
                 value = uiState.searchQuery,
                 onValueChange = { viewModel.updateSearchQuery(it) },
-                placeholder = { Text("Cari file atau folder...", color = TextSecondary, fontSize = 13.sp) },
+                placeholder = { Text("Cari di folder ini dan subfolder...", color = TextSecondary, fontSize = 13.sp) },
+                trailingIcon = {
+                    if (uiState.searchQuery.isNotEmpty()) IconButton(onClick = { viewModel.updateSearchQuery("") }) {
+                        Icon(Icons.Default.Close, "Hapus pencarian")
+                    }
+                },
                 leadingIcon = {
                     Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(18.dp))
                 },
@@ -418,6 +457,23 @@ fun FilesScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp)
                     .heightIn(min = 56.dp)
             )
+
+            if (uiState.searchQuery.isNotBlank()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (uiState.isSearching) "Mencari… ${uiState.files.size} hasil di ${uiState.currentPath} dan subfolder" else
+                            "${uiState.files.size} hasil di ${uiState.currentPath} dan subfolder",
+                        color = TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f)
+                    )
+                    if (uiState.isSearching) TextButton(onClick = viewModel::stopSearch) { Text("Berhenti") }
+                }
+                uiState.searchNotice?.let {
+                    Text(it, color = TerminalRed, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp))
+                }
+            }
+            if (uiState.isDeleting) {
+                Text("Menghapus item terpilih…", color = TextSecondary, modifier = Modifier.padding(horizontal = 20.dp))
+            }
 
             // Transfer state: persistent progress while active, concise completion result afterwards.
             if (uploadRunning || uiState.isDownloading || uiState.transferStatus != null) {
@@ -533,7 +589,8 @@ fun FilesScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Periksa host, port, username, dan koneksi jaringan server.",
+                                if (uiState.searchQuery.isNotBlank()) "Pencarian belum selesai. Coba lagi atau hapus pencarian untuk kembali ke folder." else
+                                    "Tidak dapat memuat folder. Periksa koneksi lalu coba lagi.",
                                 color = Color(0xff64748b), fontSize = 13.sp, lineHeight = 18.sp
                             )
                             Spacer(modifier = Modifier.height(12.dp))
@@ -543,6 +600,15 @@ fun FilesScreen(
                             ) {
                                 Text("Coba Lagi", color = Color.White)
                             }
+                        }
+                    }
+                    filteredList.isEmpty() && uiState.isSearching -> {
+                        Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center) {
+                            CircularProgressIndicator(color = Color(0xff3b82f6))
+                            Spacer(Modifier.height(12.dp))
+                            Text("Mencari file dan folder…", color = TextPrimary)
+                            Text("Hasil akan muncul saat ditemukan.", color = TextSecondary, fontSize = 13.sp)
                         }
                     }
                     filteredList.isEmpty() -> {
@@ -560,9 +626,9 @@ fun FilesScreen(
                                 modifier = Modifier.size(48.dp)
                             )
                             Spacer(modifier = Modifier.height(12.dp))
-                            Text("Folder ini masih kosong", color = Color(0xff1e293b), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            Text(if (uiState.searchQuery.isNotBlank()) "Tidak ada hasil pencarian" else "Folder ini masih kosong", color = Color(0xff1e293b), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.height(4.dp))
-                            Text("Unggah file atau buat folder untuk mulai mengisi.", color = Color(0xff64748b), fontSize = 13.sp)
+                            Text(if (uiState.searchQuery.isNotBlank()) "Coba kata lain atau cari dari folder induk." else "Unggah file atau buat folder untuk mulai mengisi.", color = Color(0xff64748b), fontSize = 13.sp)
                         }
                     }
                     else -> {
@@ -588,7 +654,9 @@ fun FilesScreen(
                                                      onRename = { itemToRename = folder; renameNewName = folder.name },
                                                      onDelete = { itemToDelete = folder },
                                                      onDownload = {},
+                                                     onInfo = { itemToInspect = folder },
                                                      isSelected = folder.path in selectedPaths,
+                                                     selectionMode = selectedPaths.isNotEmpty(),
                                                      showPath = uiState.searchQuery.isNotBlank()
                                                 )
                                             }
@@ -624,10 +692,11 @@ fun FilesScreen(
                                         itemToDelete = item
                                     },
                                     onDownload = {
-                                        val dest = File(context.cacheDir, item.name)
-                                        viewModel.downloadFile(item, dest, serverConfig)
+                                        chooseDownloadFolder(listOf(item))
                                     },
+                                    onInfo = { itemToInspect = item },
                                     isSelected = item.path in selectedPaths,
+                                    selectionMode = selectedPaths.isNotEmpty(),
                                     showPath = uiState.searchQuery.isNotBlank()
                                 )
                             }
@@ -668,6 +737,32 @@ fun FilesScreen(
     }
 
     // New Folder Dialog
+    itemToInspect?.let { item ->
+        AlertDialog(
+            onDismissRequest = { itemToInspect = null },
+            title = { Text(if (item.isDirectory) "Informasi folder" else "Informasi file", fontWeight = FontWeight.Bold) },
+            text = {
+                SelectionContainer {
+                    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        FileInfoDetail("Nama lengkap", item.name)
+                        FileInfoDetail("Lokasi", item.path)
+                        FileInfoDetail("Jenis", when {
+                            item.isDirectory -> "Folder"
+                            item.permissions.startsWith("l") -> "Symbolic link"
+                            item.extension.isBlank() -> "File tanpa ekstensi"
+                            else -> "File ${item.extension.uppercase(java.util.Locale.ROOT)} (berdasarkan ekstensi)"
+                        })
+                        FileInfoDetail("Ukuran", if (item.isDirectory) "Ukuran total isi folder belum dihitung" else
+                            "${item.formattedSize} · ${java.text.NumberFormat.getIntegerInstance().format(item.sizeBytes)} byte")
+                        FileInfoDetail("Terakhir diubah", item.formattedDate.takeUnless { it == "-" } ?: "Tidak tersedia")
+                        FileInfoDetail("Permission", item.permissions)
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { itemToInspect = null }) { Text("Tutup") } }
+        )
+    }
+
     if (showNewFolderDialog) {
         AlertDialog(
             onDismissRequest = { showNewFolderDialog = false },
@@ -832,7 +927,8 @@ fun FilesScreen(
             shape = RoundedCornerShape(28.dp),
             title = { Text("Hapus ${if (deleteItem.isDirectory) "folder" else "file"}?", fontWeight = FontWeight.Bold) },
             text = {
-                Text("${deleteItem.name}\n\nItem ini akan dihapus dari ${uiState.currentPath}. Tindakan ini tidak dapat dibatalkan.", color = Color(0xff64748b))
+                Text("${deleteItem.path}\n\nTindakan ini tidak dapat dibatalkan." +
+                    if (deleteItem.isDirectory) " Folder harus kosong agar bisa dihapus." else "", color = Color(0xff64748b))
             },
             confirmButton = {
                 Button(
@@ -863,7 +959,9 @@ fun FilesScreen(
             title = { Text("Hapus ${selectedDeleteItems.size} item?", fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    "Item terpilih akan dihapus dari ${uiState.currentPath}. Tindakan ini tidak dapat dibatalkan.",
+                    selectedDeleteItems.take(5).joinToString("\n") { it.path } +
+                        (if (selectedDeleteItems.size > 5) "\n…" else "") +
+                        "\n\nTindakan ini tidak dapat dibatalkan. Folder harus kosong agar bisa dihapus.",
                     color = Color(0xff64748b)
                 )
             },
@@ -974,6 +1072,14 @@ fun FilesScreen(
 }
 
 @Composable
+private fun FileInfoDetail(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(label, color = TextSecondary, fontSize = 12.sp)
+        Text(value, color = TextPrimary, fontSize = 14.sp)
+    }
+}
+
+@Composable
 @OptIn(ExperimentalFoundationApi::class)
 fun FileItemCard(
     item: RemoteFileItem,
@@ -982,7 +1088,9 @@ fun FileItemCard(
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onDownload: () -> Unit,
+    onInfo: () -> Unit,
     isSelected: Boolean = false,
+    selectionMode: Boolean = false,
     showPath: Boolean = false
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -1015,11 +1123,16 @@ fun FileItemCard(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
                     Icon(Icons.Default.Folder, null, tint = accent, modifier = Modifier.size(32.dp))
-                    Box {
+                    if (selectionMode) {
+                        Checkbox(checked = isSelected, onCheckedChange = { onOpen() })
+                    } else Box {
                         IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(48.dp)) {
                             Icon(Icons.Default.MoreVert, "Tindakan folder", tint = accent)
                         }
-                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                             DropdownMenuItem(text = { Text("Informasi folder") },
+                                 leadingIcon = { Icon(Icons.Default.Info, null) },
+                                 onClick = { menuExpanded = false; onInfo() })
                             DropdownMenuItem(text = { Text("Ganti nama") }, onClick = { menuExpanded = false; onRename() })
                             DropdownMenuItem(text = { Text("Hapus", color = TerminalRed) }, onClick = { menuExpanded = false; onDelete() })
                         }
@@ -1078,16 +1191,26 @@ fun FileItemCard(
             Spacer(modifier = Modifier.width(14.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.name,
-                    color = TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = item.name,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        item.extension.ifBlank { "FILE" }.uppercase(java.util.Locale.ROOT),
+                        color = Color(0xff1d4ed8), fontWeight = FontWeight.Bold, fontSize = 10.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 72.dp).clip(RoundedCornerShape(5.dp))
+                            .background(Color(0xffdbeafe)).padding(horizontal = 5.dp, vertical = 3.dp)
+                    )
+                }
                 Spacer(modifier = Modifier.height(2.dp))
-                 Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = item.formattedSize,
                         color = TextSecondary,
@@ -1103,22 +1226,24 @@ fun FileItemCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                 }
-                 if (showPath) {
-                     Text(
-                         text = item.path,
-                         color = TextSecondary,
-                         fontSize = 11.sp,
-                         maxLines = 1,
-                         overflow = TextOverflow.Ellipsis,
-                         modifier = Modifier.padding(top = 2.dp)
-                     )
-                 }
-             }
+                    }
+                }
+                if (showPath) {
+                    Text(
+                        text = item.path,
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
             }
 
             // 3-dots Action Menu
-            Box {
+            if (selectionMode) {
+                Checkbox(checked = isSelected, onCheckedChange = { onOpen() })
+            } else Box {
                 IconButton(onClick = { menuExpanded = true }) {
                     Icon(
                         Icons.Default.MoreVert,
@@ -1142,6 +1267,11 @@ fun FileItemCard(
                             menuExpanded = false
                             onOpen()
                         }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Informasi file", color = TextPrimary) },
+                        leadingIcon = { Icon(Icons.Default.Info, null, tint = TextSecondary) },
+                        onClick = { menuExpanded = false; onInfo() }
                     )
                     if (!item.isDirectory) {
                         DropdownMenuItem(

@@ -7,11 +7,16 @@ import com.jcraft.jsch.Session
 import com.jcraft.jsch.SftpProgressMonitor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import com.jcraft.jsch.SftpException
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -42,7 +47,21 @@ data class RemoteFileItem(
         } else "-"
 }
 
+data class FileSearchResult(
+    val files: List<RemoteFileItem>,
+    val skippedFolders: Int = 0,
+    val limited: Boolean = false
+)
+
 class SftpManager {
+
+    // JSch expands wildcard paths. Explicit file actions must always target the literal path.
+    private fun literalPath(path: String): String = buildString {
+        path.forEach { character ->
+            if (character == '\\' || character == '*' || character == '?') append('\\')
+            append(character)
+        }
+    }
 
     private var activeSession: Session? = null
     private var activeChannelSftp: ChannelSftp? = null
@@ -118,15 +137,24 @@ services:
         session.setPassword(config.sshPassword)
         session.userInfo = trust
         session.setConfig("StrictHostKeyChecking", "ask")
-        session.connect(15000)
-
-        val channel = session.openChannel("sftp") as ChannelSftp
-        channel.connect(10000)
-
-        activeSession = session
-        activeChannelSftp = channel
-        activeConnectionKey = requestedKey
-        channel
+        session.setTimeout(15_000)
+        try {
+            session.connect(15000)
+            val channel = session.openChannel("sftp") as ChannelSftp
+            try {
+                channel.connect(10000)
+            } catch (e: Exception) {
+                channel.disconnect()
+                throw e
+            }
+            activeSession = session
+            activeChannelSftp = channel
+            activeConnectionKey = requestedKey
+            channel
+        } catch (e: Exception) {
+            session.disconnect()
+            throw e
+        }
     }
 
     suspend fun listFiles(
@@ -145,7 +173,7 @@ services:
             val sftp = getConnectedSftp(config)
             val path = if (currentPath.isBlank()) sftp.home else currentPath
             @Suppress("UNCHECKED_CAST")
-            val vector = sftp.ls(path) as Vector<ChannelSftp.LsEntry>
+            val vector = sftp.ls(literalPath(path)) as Vector<ChannelSftp.LsEntry>
 
             val resultList = mutableListOf<RemoteFileItem>()
             for (entry in vector) {
@@ -183,67 +211,101 @@ services:
         rootPath: String,
         query: String,
         config: ServerConfig,
-        useSandbox: Boolean = false
-    ): Result<List<RemoteFileItem>> = withContext(Dispatchers.IO) {
+        useSandbox: Boolean = false,
+        onProgress: (FileSearchResult) -> Unit = {}
+    ): Result<FileSearchResult> = withContext(Dispatchers.IO) {
         val needle = query.trim()
-        if (needle.isBlank()) return@withContext Result.success(emptyList())
-
-        if (useSandbox || !config.isSshConfigured) {
-            val matches = mutableListOf<RemoteFileItem>()
-            val visited = mutableSetOf<String>()
-
-            fun walk(path: String) {
-                if (!visited.add(path)) return
-                for (item in sandboxFiles[path].orEmpty()) {
-                    if (item.name.contains(needle, ignoreCase = true)) matches += item
-                    if (item.isDirectory) walk(item.path)
-                }
-            }
-
-            walk(rootPath)
-            return@withContext Result.success(matches.sortedWith(compareBy<RemoteFileItem> { !it.isDirectory }.thenBy { it.path.lowercase() }))
-        }
-
+        if (needle.isBlank()) return@withContext Result.success(FileSearchResult(emptyList()))
         try {
-            val sftp = getConnectedSftp(config)
+            val sandbox = useSandbox || !config.isSshConfigured
+            val sftp = if (sandbox) null else getConnectedSftp(config)
             val matches = mutableListOf<RemoteFileItem>()
-            val visited = mutableSetOf<String>()
-            val maxDepth = 64
-            val maxResults = 5_000
-
-            fun walk(path: String, depth: Int) {
-                if (depth > maxDepth || matches.size >= maxResults || !visited.add(path)) return
-                val entries = runCatching {
-                    @Suppress("UNCHECKED_CAST")
-                    sftp.ls(path) as Vector<ChannelSftp.LsEntry>
-                }.getOrNull() ?: return
-
-                for (entry in entries) {
-                    if (matches.size >= maxResults) break
-                    val filename = entry.filename
-                    if (filename == "." || filename == "..") continue
-                    val attrs = entry.attrs
-                    val isDirectory = attrs.isDir
-                    val fullPath = if (path == "/" || path.endsWith("/")) "$path$filename" else "$path/$filename"
-                    val item = RemoteFileItem(
-                        name = filename,
-                        path = fullPath,
-                        isDirectory = isDirectory,
-                        sizeBytes = attrs.size,
-                        permissions = attrs.permissionsString ?: "-",
-                        modifiedTime = attrs.mTime.toLong()
-                    )
-                    if (filename.contains(needle, ignoreCase = true)) matches += item
-                    if (isDirectory) walk(fullPath, depth + 1)
+            val pending = java.util.ArrayDeque<Pair<String, Int>>()
+            pending.add(rootPath to 0)
+            var scannedFolders = 0
+            var skippedFolders = 0
+            var limited = false
+            val started = System.nanoTime()
+            var reportedAt = started
+            while (pending.isNotEmpty()) {
+                currentCoroutineContext().ensureActive()
+                if (scannedFolders >= 10_000 || matches.size >= 5_000 || System.nanoTime() - started >= 20_000_000_000L) {
+                    limited = true
+                    break
+                }
+                val (path, depth) = pending.removeFirst()
+                scannedFolders++
+                val entries = if (sftp == null) sandboxFiles[path].orEmpty() else {
+                    try {
+                        @Suppress("UNCHECKED_CAST")
+                        val remote = sftp.ls(literalPath(path)) as Vector<ChannelSftp.LsEntry>
+                        remote.filter { it.filename != "." && it.filename != ".." }.map { entry ->
+                            val attrs = entry.attrs
+                            RemoteFileItem(
+                                name = entry.filename,
+                                path = "${path.trimEnd('/')}/${entry.filename}",
+                                isDirectory = attrs.isDir && !attrs.isLink,
+                                sizeBytes = attrs.size,
+                                permissions = attrs.permissionsString ?: "-",
+                                modifiedTime = attrs.mTime.toLong()
+                            )
+                        }
+                    } catch (e: SftpException) {
+                        if (path == rootPath || e.id !in listOf(ChannelSftp.SSH_FX_PERMISSION_DENIED, ChannelSftp.SSH_FX_NO_SUCH_FILE)) throw e
+                        skippedFolders++
+                        continue
+                    }
+                }
+                for (item in entries) {
+                    currentCoroutineContext().ensureActive()
+                    if (item.name.contains(needle, ignoreCase = true)) matches += item
+                    if (matches.size >= 5_000) { limited = true; break }
+                    if (item.isDirectory) {
+                        if (depth < 64) pending.add(item.path to depth + 1) else limited = true
+                    }
+                }
+                val now = System.nanoTime()
+                if (now - reportedAt >= 200_000_000L) {
+                    onProgress(FileSearchResult(matches.toList(), skippedFolders))
+                    reportedAt = now
                 }
             }
-
-            walk(rootPath, 0)
-            Result.success(matches.sortedWith(compareBy<RemoteFileItem> { !it.isDirectory }.thenBy { it.path.lowercase() }))
+            Result.success(FileSearchResult(
+                matches.sortedWith(compareBy<RemoteFileItem> { !it.isDirectory }.thenBy { it.path.lowercase() }),
+                skippedFolders,
+                limited
+            ))
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
+
+    suspend fun downloadToStream(remotePath: String, output: OutputStream, config: ServerConfig): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (!config.isSshConfigured) {
+                    output.write(sandboxFileContents.getValue(remotePath).toByteArray(Charsets.UTF_8))
+                } else {
+                    val sftp = getConnectedSftp(config)
+                    sftp.get(literalPath(remotePath)).use { input ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                }
+                Result.success(Unit)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
 
     suspend fun createDirectory(
         parentPath: String,
@@ -426,9 +488,9 @@ services:
         try {
             val sftp = getConnectedSftp(config)
             if (isDirectory) {
-                sftp.rmdir(path)
+                sftp.rmdir(literalPath(path))
             } else {
-                sftp.rm(path)
+                sftp.rm(literalPath(path))
             }
             Result.success(Unit)
         } catch (e: Exception) {
@@ -449,7 +511,7 @@ services:
         try {
             val sftp = getConnectedSftp(config)
             val outputStream = ByteArrayOutputStream()
-            sftp.get(remotePath).use { FilePreview.copyBounded(it, outputStream, FilePreview.MAX_TEXT_BYTES) }
+            sftp.get(literalPath(remotePath)).use { FilePreview.copyBounded(it, outputStream, FilePreview.MAX_TEXT_BYTES) }
             val content = FilePreview.decodeText(outputStream.toByteArray())
             Result.success(content)
         } catch (e: Exception) {
@@ -480,7 +542,7 @@ services:
         try {
             val sftp = getConnectedSftp(config)
             FileOutputStream(targetFile).use { fos ->
-                sftp.get(remotePath).use { FilePreview.copyBounded(it, fos, maxBytes) }
+                sftp.get(literalPath(remotePath)).use { FilePreview.copyBounded(it, fos, maxBytes) }
             }
             Result.success(targetFile)
         } catch (e: Exception) {

@@ -131,6 +131,7 @@ dependencies {
   testImplementation(libs.androidx.junit)
   testImplementation(libs.junit)
   testImplementation("org.apache.sshd:sshd-core:2.14.0")
+  testImplementation("org.apache.sshd:sshd-sftp:2.14.0")
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.robolectric)
   testImplementation(libs.roborazzi)
