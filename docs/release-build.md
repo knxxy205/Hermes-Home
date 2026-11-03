@@ -1,6 +1,6 @@
 # Building a distribution beta
 
-The release variant is non-debuggable and uses R8 code/resource shrinking. The application ID remains `com.aistudio.homeserver.thns` so that a consistently signed build can update the installed app.
+The release variant is non-debuggable. Code minification and resource shrinking are disabled in 1.3.1 while investigating a device launch crash reported against the first optimized 1.3.0 beta. The application ID remains `com.aistudio.homeserver.thns` so that a consistently signed build can update the installed app.
 
 ## Local verification
 
@@ -22,7 +22,7 @@ Never put these values in a tracked file or publish the keystore. There is no ch
 
 ## GitHub beta workflow
 
-The manual **Prepare signed release beta** workflow builds a signed release APK, validates its signature and manifest, and uploads a review artifact. Publishing a prerelease is an explicit optional input and defaults to off.
+The manual **Prepare signed release beta** workflow builds a signed release APK, validates its signature and manifest, and tests a fresh installation, device-credential authentication, and tab navigation on an Android 14 emulator before uploading a review artifact. It retains startup logs and screenshots for diagnosis. Publishing a prerelease is an explicit optional input and defaults to off.
 
 The separate **Verify Android app** workflow runs for pushes/pull requests and does not publish Releases or receive the beta signing secrets. Its debug artifact is a development build and cannot be assumed to update an existing beta installation.
 

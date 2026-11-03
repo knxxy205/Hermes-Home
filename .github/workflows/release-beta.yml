@@ -118,6 +118,29 @@ jobs:
           cp LICENSE PRIVACY.md SECURITY.md THIRD_PARTY_NOTICES.md release-assets/
           (cd release-assets && sha256sum "$APK_FILENAME") > release-assets/SHA256SUMS.txt
 
+      - name: Download previous candidate for crash comparison
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v1.3.0-beta.1 --pattern '*.apk' --dir "$RUNNER_TEMP/previous-beta"
+
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Test signed APK startup and authentication on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            python3 scripts/smoke_android_startup.py "$RUNNER_TEMP/previous-beta/Hermes-Home-v1.3.0-beta.1.apk" --output app/build/reports/startup/previous || echo 'Previous candidate did not pass; see comparison diagnostics.'
+            adb -e uninstall com.aistudio.homeserver.thns
+            python3 scripts/smoke_android_startup.py app/build/outputs/apk/release/app-release.apk --output app/build/reports/startup/candidate
+
       - name: Upload review artifact
         uses: actions/upload-artifact@v4
         with:
@@ -135,6 +158,7 @@ jobs:
             ${{ runner.temp }}/apk-verification.txt
             app/build/reports/tests/
             app/build/reports/lint-results-release.*
+            app/build/reports/startup/
           if-no-files-found: ignore
           retention-days: 7
 
@@ -151,7 +175,7 @@ jobs:
           **[Download Hermes Home for Android](https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${APK_FILENAME})** · Android 7.0+
 
           ### Version ${APP_VERSION} beta
-          - Non-debuggable release build with code and resource optimization.
+          - Non-debuggable release build with minification disabled while investigating the 1.3.0 launch crash.
           - Private HTTP destination checks apply to redirects and resolved addresses.
           - Unused Firebase/Gemini template SDKs removed.
           - Privacy and security documentation included with the download.

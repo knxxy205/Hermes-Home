@@ -33,6 +33,8 @@ The 1.3 preparation adds a non-debuggable R8 release variant, removes unused Fir
 
 ## Signed candidate: 1.3.0-beta.1
 
+**Device review failed:** the maintainer reported a force close on both update and fresh installation. Do not install or promote this candidate. Its automated checks below established package/signature properties, not successful Android startup. A 1.3.1 candidate with minification and resource shrinking disabled is being prepared with emulator startup/authentication checks; the root cause is not yet confirmed.
+
 The [successful preparation run](https://github.com/knxxy205/Hermes-Home/actions/runs/41604258134) built and verified a signed candidate from source commit [`a5d671b12b791dde8be45c545047e3afdf419733`](https://github.com/knxxy205/Hermes-Home/commit/a5d671b12b791dde8be45c545047e3afdf419733). Workflow publication was disabled. The same verified APK was subsequently attached to [the private repository's 1.3.0 Beta 1 prerelease](https://github.com/knxxy205/Hermes-Home/releases/tag/v1.3.0-beta.1) for easier phone installation; its tag points to the matching source commit.
 
 - [Review artifact](https://github.com/knxxy205/Hermes-Home/actions/runs/41604258134/artifacts/13216021219): `hermes-home-signed-release-beta`, retained for 14 days. Repository access and GitHub sign-in are required. Extract the ZIP to obtain `Hermes-Home-v1.3.0-beta.1.apk`.
@@ -45,7 +47,7 @@ The [successful preparation run](https://github.com/knxxy205/Hermes-Home/actions
 
 The app reports version `1.3.0`; the beta sequence is in the APK filename. Matching signing identity and a higher version code support an update from the retained 1.2 beta, but installation and runtime behavior still need device testing.
 
-For device review, keep a protected profile backup, then install the candidate over the existing beta without uninstalling or clearing app data. Check that saved profiles remain accessible, biometric/device unlock works, SSH/SFTP connections and file transfers work, private HTTP Hermes chat works, queued uploads still run, and the legal documents open offline from Settings.
+For the replacement's device review, keep a protected profile backup, then install over the existing beta without uninstalling or clearing app data. Check that saved profiles remain accessible, biometric/device unlock works, SSH/SFTP connections and file transfers work, private HTTP Hermes chat works, queued uploads still run, and the legal documents open offline from Settings.
 
 ## Remaining distribution work
 

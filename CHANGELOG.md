@@ -2,6 +2,8 @@
 
 ## Unreleased — beta preparation
 
+- Prepare 1.3.1 with version code 5 and minification/resource shrinking disabled after a launch crash was reported for 1.3.0-beta.1 on both update and fresh install. The root cause is not yet confirmed.
+- Add signed-APK emulator checks for startup, device-credential unlock, and tab navigation before distributing review artifacts.
 - License Hermes Home's original code under GPL-3.0-only with maintainer approval; retain third-party notices and include the app license offline in Settings.
 - Prepare version 1.3.0 with a non-debuggable release variant, code/resource shrinking, and a manual signed-beta workflow that defaults to artifact review.
 - Remove unused Firebase/Gemini, Google Services, Room/Moshi/Retrofit template dependencies and secret-to-BuildConfig generation.

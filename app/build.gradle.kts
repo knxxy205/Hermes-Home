@@ -51,8 +51,8 @@ android {
     applicationId = "com.aistudio.homeserver.thns"
     minSdk = 24
     targetSdk = 36
-    versionCode = 4
-    versionName = "1.3.0"
+    versionCode = 5
+    versionName = "1.3.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -81,8 +81,10 @@ android {
     release {
       isCrunchPngs = false
       isDebuggable = false
-      isMinifyEnabled = true
-      isShrinkResources = true
+      // The first optimized beta crashed on a device, including after a clean install.
+      // Keep optimization off until that regression is diagnosed and covered on Android.
+      isMinifyEnabled = false
+      isShrinkResources = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       if (!releaseStorePath.isNullOrBlank()) signingConfig = signingConfigs.getByName("release")
     }
