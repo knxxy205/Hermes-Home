@@ -7,6 +7,7 @@ Review date: 3 November 2026. Repository visibility remains private. This record
 An independent mirror was freshly cloned from GitHub at `main` commit `6e13340f8dd2f0c227d9fcffd35d837f96a87ca0`, including the three retained release tags.
 
 - All 44 reachable commits passed Gitleaks with its default rules and redacted output. The current production source also passed a separate Gitleaks directory scan.
+- After audit commit `9ecbb1059074cbdf2819fab4f2f4fb211e939926` was pushed, the independent mirror was fetched again. All 45 reachable commits passed Gitleaks and the mirror integrity check passed.
 - Git object integrity checks passed. The fresh mirror contained 847 reachable objects and no unreachable objects.
 - The known original commit was absent from both that mirror and the local shared Git object database. Local integrity checks reported no unreachable or dangling objects.
 - GitHub listed zero forks, zero pull requests, and no pull-request refs. The reachable history contained no Git LFS pointer files.
@@ -21,7 +22,11 @@ The previous cleanup recorded removal of four distinct credential/example values
 
 The original commit still responds through GitHub's Git commit API despite being absent from all advertised branches and tags. A metadata comparison matched the 28 old commits to rewritten commits by unique author timestamp and commit message, identifying the original root as the earliest rewritten commit. This reconstruction is not the original `git-filter-repo` report.
 
-GitHub documents server garbage collection and cached-view removal as a Support operation. There is no repository-owner Git command or public purge API that completes that step. A private Support request has been prepared outside the repository with the original and rewritten commit identifiers and verification results. It has not been submitted, and there is no Support case number or purge confirmation.
+GitHub documents server garbage collection and cached-view removal as a Support operation. There is no repository-owner Git command or public purge API that completes that step. On 3 November 2026, the maintainer-approved private request was submitted through GitHub Support using the subject "Request review and purge of cached sensitive history — knxxy205/Hermes-Home" and issue type "General question or feature request". The report contains the original and rewritten commit identifiers, affected paths, verification results, and the explicitly unknown credential-revocation status; it omits credential values.
+
+The portal displayed "Thanks for getting in touch with us! Your message has been successfully submitted." That confirmation was saved outside the repository. However, the account's Support ticket list still showed no tickets after refresh, so a case number and the saved report body could not be independently verified. Submission confirmation does not establish Support acceptance or server-side deletion. Follow up through the [private Support ticket portal](https://help.github.com/support/tickets) and the submitting account's confirmation email before considering another submission. No purge confirmation has been received.
+
+After submission, the original commit `32c74b5e89ad5e1195d0d9012f6898e275ff2a01` still responded through the authenticated Git commit API. Repository visibility was rechecked as private.
 
 GitHub also states that Support will only assist with sensitive-data removal where it determines the risk cannot be mitigated by rotating credentials. Support acceptance and eventual deletion must not be assumed.
 
