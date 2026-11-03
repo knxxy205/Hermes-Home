@@ -33,10 +33,11 @@ The 1.3 preparation adds a non-debuggable R8 release variant, removes unused Fir
 
 ## Signed candidate: 1.3.0-beta.1
 
-The [successful preparation run](https://github.com/knxxy205/Hermes-Home/actions/runs/41604258134) built and verified a signed candidate from source commit [`a5d671b12b791dde8be45c545047e3afdf419733`](https://github.com/knxxy205/Hermes-Home/commit/a5d671b12b791dde8be45c545047e3afdf419733). Publication was disabled; no new GitHub release or tag was created.
+The [successful preparation run](https://github.com/knxxy205/Hermes-Home/actions/runs/41604258134) built and verified a signed candidate from source commit [`a5d671b12b791dde8be45c545047e3afdf419733`](https://github.com/knxxy205/Hermes-Home/commit/a5d671b12b791dde8be45c545047e3afdf419733). Workflow publication was disabled. The same verified APK was subsequently attached to [the private repository's 1.3.0 Beta 1 prerelease](https://github.com/knxxy205/Hermes-Home/releases/tag/v1.3.0-beta.1) for easier phone installation; its tag points to the matching source commit.
 
 - [Review artifact](https://github.com/knxxy205/Hermes-Home/actions/runs/41604258134/artifacts/13216021219): `hermes-home-signed-release-beta`, retained for 14 days. Repository access and GitHub sign-in are required. Extract the ZIP to obtain `Hermes-Home-v1.3.0-beta.1.apk`.
 - APK size: 2,295,417 bytes (approximately 2.3 MB).
+- [Direct APK download](https://github.com/knxxy205/Hermes-Home/releases/download/v1.3.0-beta.1/Hermes-Home-v1.3.0-beta.1.apk) from the private prerelease requires repository access and GitHub sign-in. The release asset's GitHub SHA-256 digest matches the independently verified APK checksum below.
 - APK SHA-256: `b5e50d7d04d78602f6bb14183cdae4e92b3e36ff7d66b730ff3328e8e07543be`.
 - Signing certificate SHA-256: `1638687c08785bb0c5887c09638834b173f0f7645813940e648c74ebd1dec79d`, independently matched to the retained v1.2 beta APK.
 - After downloading the artifact, local verification passed for the APK signature, checksum, application ID, version name/code, non-debuggable manifest, and exact bundled legal-document contents from the source commit. No Firebase manifest entries or DEX class descriptors were found.
