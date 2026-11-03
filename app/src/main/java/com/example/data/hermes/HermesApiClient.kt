@@ -35,44 +35,18 @@ data class HermesChatSession(
     }
 }
 
-class HermesApiClient {
+class HermesApiClient(baseClient: OkHttpClient = OkHttpClient()) {
 
-    private val httpClient = OkHttpClient.Builder()
+    private val httpClient = baseClient.newBuilder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
+        .addNetworkInterceptor(HermesEndpointPolicy.interceptor)
         .build()
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    private fun validateEndpoint(rawUrl: String): Result<Unit> = runCatching {
-        val parsed = java.net.URI(rawUrl.trim())
-        require(parsed.scheme.equals("https", ignoreCase = true) || parsed.scheme.equals("http", ignoreCase = true)) {
-            "URL Hermes harus menggunakan HTTP atau HTTPS"
-        }
-        require(!parsed.host.isNullOrBlank()) { "URL Hermes tidak valid" }
-        require(parsed.userInfo == null) { "Jangan masukkan username atau password ke dalam URL" }
-        require(parsed.scheme.equals("https", ignoreCase = true) || isPrivateHttpHost(parsed.host)) {
-            "HTTP tanpa enkripsi hanya diizinkan untuk server lokal atau jaringan privat. Gunakan HTTPS untuk host publik."
-        }
-    }
-
-    private fun isPrivateHttpHost(host: String): Boolean {
-        val value = host.lowercase().removePrefix("[").removeSuffix("]")
-        if (value == "localhost" || value.endsWith(".local") || value.endsWith(".lan") || value.endsWith(".ts.net")) return true
-        if (value == "::1" || value.startsWith("fc") || value.startsWith("fd") || value.startsWith("fe80:")) return true
-        val parts = value.split('.')
-        if (parts.size != 4) return false
-        val octets = parts.map { it.toIntOrNull()?.takeIf { number -> number in 0..255 } ?: return false }
-        val first = octets[0]
-        val second = octets[1]
-        return first == 10 ||
-            first == 127 ||
-            (first == 169 && second == 254) ||
-            (first == 172 && second in 16..31) ||
-            (first == 192 && second == 168) ||
-            (first == 100 && second in 64..127)
-    }
+    private fun validateEndpoint(rawUrl: String): Result<Unit> = HermesEndpointPolicy.validate(rawUrl)
 
     private fun normalizeEndpoint(baseUrl: String): String {
         var cleanUrl = baseUrl.trim().trimEnd('/')
@@ -142,24 +116,25 @@ class HermesApiClient {
         }
 
         try {
-            val response = httpClient.newCall(requestBuilder.build()).execute()
-            val responseBody = response.body?.string() ?: ""
+            httpClient.newCall(requestBuilder.build()).execute().use { response ->
+                val responseBody = response.body?.string() ?: ""
 
-            if (!response.isSuccessful) {
-                return@withContext Result.failure(
-                    Exception("HTTP ${response.code}: $responseBody")
-                )
-            }
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        Exception("HTTP ${response.code}: $responseBody")
+                    )
+                }
 
-            val json = JSONObject(responseBody)
-            val choices = json.getJSONArray("choices")
-            if (choices.length() > 0) {
-                val firstChoice = choices.getJSONObject(0)
-                val messageObj = firstChoice.getJSONObject("message")
-                val content = messageObj.getString("content")
-                Result.success(content)
-            } else {
-                Result.failure(Exception("Empty choices array from Hermes response"))
+                val json = JSONObject(responseBody)
+                val choices = json.getJSONArray("choices")
+                if (choices.length() > 0) {
+                    val firstChoice = choices.getJSONObject(0)
+                    val messageObj = firstChoice.getJSONObject("message")
+                    val content = messageObj.getString("content")
+                    Result.success(content)
+                } else {
+                    Result.failure(Exception("Empty choices array from Hermes response"))
+                }
             }
         } catch (e: Exception) {
             if (useSandboxFallback) {
@@ -256,14 +231,12 @@ class HermesApiClient {
                 if (config.hermesApiKey.isNotBlank()) {
                     reqBuilder.addHeader("Authorization", "Bearer ${config.hermesApiKey}")
                 }
-                val resp = httpClient.newCall(reqBuilder.build()).execute()
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string() ?: ""
-                    val models = extractModelNames(body)
-                    if (models.isNotEmpty()) {
-                        discovered.addAll(models)
-                        break // Found working endpoint with valid models
-                    }
+                val models = httpClient.newCall(reqBuilder.build()).execute().use { response ->
+                    if (response.isSuccessful) extractModelNames(response.body?.string().orEmpty()) else emptyList()
+                }
+                if (models.isNotEmpty()) {
+                    discovered.addAll(models)
+                    break
                 }
             } catch (_: Exception) {
                 // Continue to next candidate endpoint
@@ -299,12 +272,13 @@ class HermesApiClient {
         }
 
         try {
-            val response = httpClient.newCall(requestBuilder.build()).execute()
-            if (response.isSuccessful) {
-                Result.success("Koneksi Hermes AI Berhasil! (HTTP ${response.code})")
-            } else {
-                val msg = response.body?.string() ?: response.message
-                Result.failure(Exception("HTTP ${response.code}: $msg"))
+            httpClient.newCall(requestBuilder.build()).execute().use { response ->
+                if (response.isSuccessful) {
+                    Result.success("Koneksi Hermes AI Berhasil! (HTTP ${response.code})")
+                } else {
+                    val msg = response.body?.string() ?: response.message
+                    Result.failure(Exception("HTTP ${response.code}: $msg"))
+                }
             }
         } catch (e: Exception) {
             Result.failure(e)

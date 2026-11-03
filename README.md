@@ -47,13 +47,15 @@ See [the Files beta test guide](docs/files-beta-testing.md) before distributing 
 
 ## Build from source
 
-The project uses Kotlin, Jetpack Compose, and Gradle. With Java 17 and Android SDK 36 installed, build a debug APK with:
+The project uses Kotlin, Jetpack Compose, and Gradle. With Java 17, Gradle 9.3.1, and Android SDK 36.1 installed, build a debug APK with:
 
 ```sh
 gradle :app:assembleDebug
 ```
 
-The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. GitHub Actions also builds and publishes a debug APK for pushes to `main`. Debug APKs are for testing and development, not Play Store releases.
+The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. GitHub Actions runs checks and stores a CI debug artifact for pushes and pull requests. This artifact uses a development signing key and is for testing; it is not published to Releases and should not be used to update an existing GitHub beta installation.
+
+The distribution beta uses a non-debuggable, optimized release variant. See [release build and signing instructions](docs/release-build.md). The manual release workflow prepares an artifact for review before optional publication.
 
 ## Security and privacy
 
@@ -64,10 +66,14 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. GitHub Action
 - Profile exports contain connection credentials. Protect them with a strong backup password and store the resulting backup securely.
 - Connecting to a server and using its SSH or Hermes service sends data to that server. Review the server and network you configure.
 
+Read the [privacy policy](PRIVACY.md) and [security reporting instructions](SECURITY.md). These documents are also available offline in Settings in the 1.3 beta. This version removes the unused Firebase/Gemini template SDKs; Hermes requests go to the endpoint you configure.
+
 ## Third-party notices
 
 Terminal emulator and renderer sources are based on Termux v0.118.0 and are included under `app/src/main/java/com/termux`. See the notices and license texts in `app/src/main/assets/licenses`. The upstream terminal emulator code carries an Apache-2.0 exception; other applicable Termux components are GPL-3.0-only. Each APK release links to the source commit used for that build.
 
 ## License
 
-See the notices and license texts in `app/src/main/assets/licenses` for third-party components. Check the repository's license files for the terms applicable to Hermes Home itself.
+Hermes Home's original code is licensed under **GNU GPL version 3 only (GPL-3.0-only)**. You may use, modify, and redistribute it under those terms, including providing corresponding source when distributing covered binaries. The app is provided without warranty. See [LICENSE](LICENSE) for the full terms and [the recorded license decision](docs/license-review.md).
+
+Third-party components retain their own notices and applicable exceptions. See [third-party notices](THIRD_PARTY_NOTICES.md) and the full license texts in `app/src/main/assets/licenses`.

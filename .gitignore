@@ -16,3 +16,12 @@
 local.properties
 .env
 debug.keystore
+*.jks
+*.keystore
+*.p12
+keystore.properties
+signing.properties
+*.pem
+*.key
+__pycache__/
+*.pyc

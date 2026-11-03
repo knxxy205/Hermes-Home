@@ -4,7 +4,7 @@ Review date: 2026-11-03. This is a record of local checks and remaining work, no
 
 ## Repository history
 
-- Gitleaks with its default rules and full redaction scanned all 31 commits reachable from the local Git refs and reported no findings.
+- Gitleaks with its default rules and full redaction scanned all 33 commits reachable from the local Git refs before the 1.3 preparation commit and reported no findings.
 - A separate Gitleaks scan of the current `app/src/main` source also reported no findings with its default rules.
 - A separate check found historical password/API key literals in Settings presets and sample server configuration. Four distinct credential/example values have been replaced across the reachable Git history, including branches and tags.
 - Exact-value scanning of the rewritten Git objects found zero occurrences of those removed values. The latest application source tree was unchanged by the rewrite; the change removed values from older versions.
@@ -19,12 +19,24 @@ See [the Files beta test guide](files-beta-testing.md) for automated checks and 
 
 Local verification completed with `:app:testDebugUnitTest :app:assembleDebug`: 23 tests passed, with zero failures, errors, or skipped tests, and the debug APK was built successfully. This includes the embedded SFTP integration test, search state regression test, document-provider tests, and existing screenshot test.
 
+## Version 1.3 verification
+
+The maintainer reported that the Files checks on the previous v1.2 beta worked on an Android device. The new 1.3 candidate still needs its own verification after build/signing.
+
+The 1.3 preparation adds a non-debuggable R8 release variant, removes unused Firebase/Gemini template SDKs, validates every Hermes HTTP redirect and resolved address, and packages privacy/security notices offline in Settings. A manual workflow prepares a signed APK with the existing beta identity, and defaults to artifact review rather than publication.
+
+- Android/JVM tests: 28 passed with zero failures, errors, or skipped tests, including five Hermes endpoint policy/integration tests.
+- Production credential-literal guard: four Python tests passed, and the current production source scan passed. This narrow guard supplements secret scanning; it does not establish that all secrets have been detected.
+- Optimized unsigned release build and release lint passed. Lint reports zero errors and 84 warnings, mainly dependency updates, Kotlin API suggestions, and unused resources. Remaining warnings also include intentional base cleartext support for dynamic private HTTP destinations, a terminal accessibility issue, and private API use in bundled terminal code.
+- The merged release manifest is non-debuggable and has no Firebase providers. Final APK contents and signed-candidate verification are checked separately.
+- The maintainer approved [GPL-3.0-only](license-review.md) for original app code on 3 November 2026. Root `LICENSE` includes the full GPL text; the app and release artifact include it alongside third-party notices.
+
 ## Remaining distribution work
 
-1. Run the device scenarios against a consistently signed APK; local build and automated verification are complete.
-2. Set up a dedicated production signing key and preserve it securely for future updates. The existing GitHub workflow distributes debug APKs.
-3. Prepare the signed beta APK, checksum, version, and release notes.
-4. Finalize the privacy policy, security reporting channel, and the app's license alongside third-party notices.
-5. Start a small beta group before wider promotion.
+1. Produce and verify the signed 1.3 candidate with the existing GitHub beta signing identity.
+2. Test the signed candidate on a device, including updating the earlier beta without clearing app data, biometric unlock, SSH/SFTP, Hermes chat, and background uploads.
+3. Confirm rotation/revocation of any historical credentials that were actually used, and resolve GitHub cached-commit removal before opening the repository.
+4. Securely back up the signing identity and finalize the private reporting channel.
+5. Review [the privacy policy](../PRIVACY.md), [security policy](../SECURITY.md), [third-party notices](../THIRD_PARTY_NOTICES.md), and [release instructions](release-build.md), then begin a small beta group. Public APK recipients must also have access to matching source and build instructions.
 
 Repository visibility remains private. The retained APK is still a testing build, not a production release.

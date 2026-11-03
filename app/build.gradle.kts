@@ -1,12 +1,46 @@
-import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
 
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
-  alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.roborazzi)
-  alias(libs.plugins.secrets)
-  alias(libs.plugins.google.services)
+}
+
+@CacheableTask
+abstract class PackageLegalAssets : DefaultTask() {
+  @get:InputFiles
+  @get:PathSensitive(PathSensitivity.NAME_ONLY)
+  abstract val documents: ConfigurableFileCollection
+
+  @get:OutputDirectory
+  abstract val outputDirectory: DirectoryProperty
+
+  @TaskAction
+  fun copyDocuments() {
+    val destination = outputDirectory.get().asFile.apply { mkdirs() }
+    documents.files.forEach { source -> source.copyTo(destination.resolve(source.name), overwrite = true) }
+  }
+}
+
+val releaseStorePath = providers.environmentVariable("RELEASE_KEYSTORE_PATH")
+  .orElse(providers.environmentVariable("KEYSTORE_PATH")).orNull
+val releaseStorePassword = providers.environmentVariable("RELEASE_STORE_PASSWORD")
+  .orElse(providers.environmentVariable("STORE_PASSWORD")).orNull
+val releaseKeyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD")
+  .orElse(providers.environmentVariable("KEY_PASSWORD")).orNull
+val releaseKeyAlias = providers.environmentVariable("RELEASE_KEY_ALIAS").orElse("upload").get()
+if (!releaseStorePath.isNullOrBlank()) {
+  require(!releaseStorePassword.isNullOrBlank() && !releaseKeyPassword.isNullOrBlank()) {
+    "Release signing requires both store and key passwords in environment variables."
+  }
 }
 
 android {
@@ -17,8 +51,8 @@ android {
     applicationId = "com.aistudio.homeserver.thns"
     minSdk = 24
     targetSdk = 36
-    versionCode = 3
-    versionName = "1.2"
+    versionCode = 4
+    versionName = "1.3.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -33,21 +67,24 @@ android {
         keyPassword = System.getenv("DEBUG_KEYSTORE_PASSWORD")
       }
     }
-    create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+    if (!releaseStorePath.isNullOrBlank()) {
+      create("release") {
+        storeFile = file(releaseStorePath)
+        storePassword = releaseStorePassword
+        keyAlias = releaseKeyAlias
+        keyPassword = releaseKeyPassword
+      }
     }
   }
 
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      isDebuggable = false
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+      if (!releaseStorePath.isNullOrBlank()) signingConfig = signingConfigs.getByName("release")
     }
     debug { }
   }
@@ -66,21 +103,21 @@ android {
   }
 }
 
-// Configure the Secrets Gradle Plugin to use .env and .env.example files
-// to match the convention used in Web projects.
-secrets {
-  propertiesFileName = ".env"
-  defaultPropertiesFileName = ".env.example"
-  ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
+androidComponents {
+  onVariants { variant ->
+    val legalAssets = tasks.register<PackageLegalAssets>("package${variant.name.replaceFirstChar { it.uppercase() }}LegalAssets") {
+      documents.from(rootProject.files("PRIVACY.md", "SECURITY.md", "THIRD_PARTY_NOTICES.md"))
+      if (rootProject.file("LICENSE").exists()) documents.from(rootProject.file("LICENSE"))
+      outputDirectory.set(layout.buildDirectory.dir("generated/legalAssets/${variant.name}"))
+    }
+    variant.sources.assets?.addGeneratedSourceDirectory(legalAssets, PackageLegalAssets::outputDirectory)
+  }
 }
-
-googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
-  implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.appcompat)
   implementation(libs.androidx.activity.compose)
@@ -102,11 +139,7 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   // implementation(libs.androidx.navigation.compose)
-  implementation(libs.androidx.room.ktx)
-  implementation(libs.androidx.room.runtime)
   // implementation(libs.coil.compose)
-  implementation(libs.converter.moshi)
-  implementation(libs.firebase.ai)
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)
 
@@ -116,20 +149,16 @@ dependencies {
   // implementation(libs.androidx.credentials)
   // implementation(libs.androidx.credentials.play.services)
   // implementation(libs.googleid)
-  implementation(libs.firebase.appcheck.recaptcha)
-  implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  implementation(libs.logging.interceptor)
-  implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
   implementation("com.github.mwiede:jsch:0.2.20")
   // implementation(libs.play.services.location)
-  implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
   testImplementation(libs.junit)
+  testImplementation("com.squareup.okhttp3:mockwebserver:4.10.0")
   testImplementation("org.apache.sshd:sshd-core:2.14.0")
   testImplementation("org.apache.sshd:sshd-sftp:2.14.0")
   testImplementation(libs.kotlinx.coroutines.test)
@@ -144,6 +173,4 @@ dependencies {
   androidTestImplementation(libs.androidx.runner)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
-  "ksp"(libs.androidx.room.compiler)
-  "ksp"(libs.moshi.kotlin.codegen)
 }

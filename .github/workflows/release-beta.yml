@@ -1,0 +1,149 @@
+name: Prepare signed release beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      beta_number:
+        description: Beta sequence number for this app version
+        type: string
+        default: '1'
+        required: true
+      publish:
+        description: Publish the verified APK as a GitHub prerelease
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-beta
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check production credential literals
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          python3 scripts/check_no_embedded_credentials.py
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Check release metadata
+        id: metadata
+        env:
+          BETA_NUMBER: ${{ inputs.beta_number }}
+        run: |
+          set -euo pipefail
+          case "$BETA_NUMBER" in ''|*[!0-9]*) echo 'Beta number must contain digits only.' >&2; exit 1;; esac
+          APP_VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)
+          test -n "$APP_VERSION"
+          test -s PRIVACY.md
+          test -s SECURITY.md
+          test -s LICENSE
+          grep -q '^SPDX-License-Identifier: GPL-3.0-only$' LICENSE
+          echo "tag=v${APP_VERSION}-beta.${BETA_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "filename=Hermes-Home-v${APP_VERSION}-beta.${BETA_NUMBER}.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Test and build signed release
+        env:
+          BETA_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/hermes-beta-signing.jks
+          RELEASE_STORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: homeserver
+        run: |
+          set -euo pipefail
+          test -n "$BETA_KEYSTORE_BASE64"
+          test -n "$RELEASE_STORE_PASSWORD"
+          umask 077
+          trap 'rm -f "$RELEASE_KEYSTORE_PATH"' EXIT
+          printf '%s' "$BETA_KEYSTORE_BASE64" | base64 --decode > "$RELEASE_KEYSTORE_PATH"
+          keytool -exportcert -keystore "$RELEASE_KEYSTORE_PATH" -alias "$RELEASE_KEY_ALIAS" \
+            -storepass:env RELEASE_STORE_PASSWORD -file "$RUNNER_TEMP/hermes-beta-signing.der"
+          gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --no-daemon --no-configuration-cache --stacktrace
+
+      - name: Verify and package release APK
+        env:
+          APK_FILENAME: ${{ steps.metadata.outputs.filename }}
+          APP_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          APK_PATH=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK_PATH"
+          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK_PATH" > "$RUNNER_TEMP/apk-verification.txt"
+          EXPECTED_CERT=$(sha256sum "$RUNNER_TEMP/hermes-beta-signing.der" | cut -d ' ' -f 1)
+          ACTUAL_CERT=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-verification.txt")
+          test "$ACTUAL_CERT" = "$EXPECTED_CERT"
+          # Verified against the retained v1.2-beta.28 APK, not just the current secret.
+          test "$ACTUAL_CERT" = '1638687c08785bb0c5887c09638834b173f0f7645813940e648c74ebd1dec79d'
+          APK_ANALYZER="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          test "$("$APK_ANALYZER" manifest debuggable "$APK_PATH")" = 'false'
+          test "$("$APK_ANALYZER" manifest application-id "$APK_PATH")" = 'com.aistudio.homeserver.thns'
+          test "$("$APK_ANALYZER" manifest version-name "$APK_PATH")" = "$APP_VERSION"
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          with ZipFile('app/build/outputs/apk/release/app-release.apk') as apk:
+              for name in ('LICENSE', 'PRIVACY.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md'):
+                  assert apk.read('assets/' + name) == Path(name).read_bytes(), name
+          PY
+          mkdir -p release-assets
+          cp "$APK_PATH" "release-assets/$APK_FILENAME"
+          cp "$RUNNER_TEMP/apk-verification.txt" release-assets/signature.txt
+          cp LICENSE PRIVACY.md SECURITY.md THIRD_PARTY_NOTICES.md release-assets/
+          (cd release-assets && sha256sum "$APK_FILENAME") > release-assets/SHA256SUMS.txt
+
+      - name: Upload review artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-home-signed-release-beta
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Prepare release notes
+        if: inputs.publish
+        env:
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          APK_FILENAME: ${{ steps.metadata.outputs.filename }}
+          APP_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          Manage your homeserver from Android with SSH, SFTP, and self-hosted Hermes chat.
+
+          **[Download Hermes Home for Android](https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${APK_FILENAME})** · Android 7.0+
+
+          ### Version ${APP_VERSION} beta
+          - Non-debuggable release build with code and resource optimization.
+          - Private HTTP destination checks apply to redirects and resolved addresses.
+          - Unused Firebase/Gemini template SDKs removed.
+          - Privacy and security documentation included with the download.
+          - GPL-3.0-only app license with corresponding source and third-party notices.
+
+          This beta uses the same signing identity as earlier GitHub beta APKs and can update those installations. Review the [changelog](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/CHANGELOG.md) and [known limitations](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/README.md#beta-limitations).
+
+          Check SHA256SUMS.txt for the APK checksum and signature.txt for the signing certificate. [Matching source archive](https://github.com/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.zip) · [Privacy policy](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/PRIVACY.md)
+          EOF
+
+      - name: Publish prerelease
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          APP_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --title "Hermes Home v${APP_VERSION} — Beta" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --target "$GITHUB_SHA" --prerelease

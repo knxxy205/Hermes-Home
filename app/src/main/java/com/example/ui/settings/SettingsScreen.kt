@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
@@ -84,6 +86,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.BuildConfig
 import com.example.data.hermes.HermesApiClient
 import com.example.data.model.ConnectionProfile
 import com.example.data.model.ServerConfig
@@ -124,6 +127,8 @@ fun SettingsScreen(
     var backupPassword by remember { mutableStateOf("") }
     var backupBusy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    var legalDocument by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var legalText by remember { mutableStateOf<String?>(null) }
     var exportPayloadText by remember { mutableStateOf("") }
     var showImportDialog by remember { mutableStateOf(false) }
     var importInputText by remember { mutableStateOf("") }
@@ -135,6 +140,30 @@ fun SettingsScreen(
     var newProfileUser by remember { mutableStateOf("") }
     var newProfilePassword by remember { mutableStateOf("") }
     var newProfilePasswordVisible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(legalDocument) {
+        legalText = null
+        legalDocument?.let { (_, asset) ->
+            legalText = withContext(Dispatchers.IO) {
+                runCatching { context.assets.open(asset).bufferedReader().use { it.readText() } }
+                    .getOrElse { "Dokumen belum tersedia di build ini." }
+            }
+        }
+    }
+    legalDocument?.let { (title, _) ->
+        AlertDialog(
+            onDismissRequest = { legalDocument = null },
+            title = { Text(title, fontWeight = FontWeight.Bold) },
+            text = {
+                SelectionContainer {
+                    Text(legalText ?: "Memuat dokumen…",
+                        modifier = Modifier.height(380.dp).verticalScroll(rememberScrollState()),
+                        fontSize = 13.sp, lineHeight = 20.sp)
+                }
+            },
+            confirmButton = { TextButton(onClick = { legalDocument = null }) { Text("Tutup") } }
+        )
+    }
 
     LaunchedEffect(uiState.statusMessage) {
         uiState.statusMessage?.let { msg ->
@@ -1180,6 +1209,23 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
             }
+            }
+            item(key = "about", contentType = "about") {
+                TailHarnessCard {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Hermes Home", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text("Versi ${BuildConfig.VERSION_NAME} · ${if (BuildConfig.DEBUG) "Debug beta" else "Release beta"}",
+                            color = TextSecondary, fontSize = 12.sp)
+                        Text("© 2026 knxxy205 dan kontributor Hermes Home · GPL-3.0-only",
+                            color = TextSecondary, fontSize = 12.sp)
+                        Text("Tanpa jaminan. Boleh dimodifikasi dan didistribusikan sesuai GPL versi 3.",
+                            color = TextSecondary, fontSize = 12.sp)
+                        TextButton(onClick = { legalDocument = "Lisensi aplikasi · GPL-3.0-only" to "LICENSE" }) { Text("Lisensi aplikasi") }
+                        TextButton(onClick = { legalDocument = "Kebijakan privasi" to "PRIVACY.md" }) { Text("Kebijakan privasi") }
+                        TextButton(onClick = { legalDocument = "Pelaporan keamanan" to "SECURITY.md" }) { Text("Pelaporan keamanan") }
+                        TextButton(onClick = { legalDocument = "Lisensi pihak ketiga" to "THIRD_PARTY_NOTICES.md" }) { Text("Lisensi pihak ketiga") }
+                    }
+                }
             }
         }
     }

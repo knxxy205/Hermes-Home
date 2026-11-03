@@ -2,6 +2,13 @@
 
 ## Unreleased — beta preparation
 
+- License Hermes Home's original code under GPL-3.0-only with maintainer approval; retain third-party notices and include the app license offline in Settings.
+- Prepare version 1.3.0 with a non-debuggable release variant, code/resource shrinking, and a manual signed-beta workflow that defaults to artifact review.
+- Remove unused Firebase/Gemini, Google Services, Room/Moshi/Retrofit template dependencies and secret-to-BuildConfig generation.
+- Validate Hermes private HTTP URLs at every redirect and verify their resolved network addresses.
+- Limit release HTTPS trust to system certificate authorities; additional user-installed roots remain a debug-only override.
+- Add offline privacy, security, and third-party notices in Settings.
+
 - Show recursive search results progressively, with a stop button and notices for incomplete searches.
 - Restore the previous folder listing when search is cleared, and prevent an older search from replacing a newer result or showing a stale connection error.
 - Save single and multiple downloads to a folder chosen through Android's folder picker.

@@ -2,5 +2,5 @@
   "name": "Hermes Home",
   "description": "Android homeserver manager over Tailscale with SSH terminal, SFTP file browser, self-hosted Hermes AI chat, and encrypted settings",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }

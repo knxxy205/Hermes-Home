@@ -190,8 +190,8 @@ fun VaultLockScreen(onUnlockRequested: () -> Unit) {
                 }
                 Spacer(Modifier.width(16.dp))
                 Column {
-                    Text("Homeserver", color = TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp)
-                    Text("Remote", color = BurntOrange, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp)
+                    Text("Hermes", color = TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp)
+                    Text("Home", color = BurntOrange, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp)
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -428,32 +428,32 @@ fun TailHarnessBottomNav(
             for (tab in AppTab.values()) {
                 val isSelected = tab == selectedTab
 
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 56.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (isSelected) Color(0xff3B82F6) else Color.Transparent)
-                            .clickable { onTabSelected(tab) }
-                            .padding(vertical = 8.dp)
-                            .testTag(tab.tag),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = tab.icon,
-                            contentDescription = tab.title,
-                            tint = if (isSelected) Color.White else Color(0xff64748B),
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = tab.title,
-                            color = if (isSelected) Color.White else Color(0xff64748B),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 56.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (isSelected) Color(0xff3B82F6) else Color.Transparent)
+                        .clickable { onTabSelected(tab) }
+                        .padding(vertical = 8.dp)
+                        .testTag(tab.tag),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = tab.icon,
+                        contentDescription = tab.title,
+                        tint = if (isSelected) Color.White else Color(0xff64748B),
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = tab.title,
+                        color = if (isSelected) Color.White else Color(0xff64748B),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
     }
