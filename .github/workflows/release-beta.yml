@@ -118,6 +118,14 @@ jobs:
           cp LICENSE PRIVACY.md SECURITY.md THIRD_PARTY_NOTICES.md release-assets/
           (cd release-assets && sha256sum "$APK_FILENAME") > release-assets/SHA256SUMS.txt
 
+      - name: Upload review artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-home-signed-release-beta
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Download previous candidate for crash comparison
         env:
           GH_TOKEN: ${{ github.token }}
@@ -131,23 +139,18 @@ jobs:
 
       - name: Test signed APK startup and authentication on Android
         uses: reactivecircus/android-emulator-runner@v2
+        timeout-minutes: 8
         with:
           api-level: 34
           target: google_apis
           arch: x86_64
+          disk-size: 2048M
           disable-animations: true
+          emulator-boot-timeout: 180
           script: |
             python3 scripts/smoke_android_startup.py "$RUNNER_TEMP/previous-beta/Hermes-Home-v1.3.0-beta.1.apk" --output app/build/reports/startup/previous || echo 'Previous candidate did not pass; see comparison diagnostics.'
             adb -e uninstall com.aistudio.homeserver.thns
             python3 scripts/smoke_android_startup.py app/build/outputs/apk/release/app-release.apk --output app/build/reports/startup/candidate
-
-      - name: Upload review artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hermes-home-signed-release-beta
-          path: release-assets/
-          if-no-files-found: error
-          retention-days: 14
 
       - name: Upload verification diagnostics
         if: always()
