@@ -22,7 +22,9 @@ Never put these values in a tracked file or publish the keystore. There is no ch
 
 ## GitHub beta workflow
 
-The manual **Prepare signed release beta** workflow builds a signed release APK, validates its signature and manifest, and uploads a review artifact before attempting a fresh installation, device-credential authentication, and tab navigation on an Android 14 emulator. This preserves the signed APK if the emulator infrastructure fails. Artifact availability alone does not mean runtime checks passed; inspect the emulator step and retained startup logs/screenshots. Workflow publication requires the preceding runtime step to succeed, is an explicit optional input, and defaults to off.
+The manual **Prepare signed release beta** workflow builds a signed release APK, validates its signature and manifest, and uploads a review artifact. A separate job on a fresh runner then attempts a fresh installation, device-credential authentication, and tab navigation on an Android 14 emulator. This preserves the signed APK if the emulator infrastructure fails and keeps emulator storage separate from Gradle build output. Artifact availability alone does not mean runtime checks passed; inspect the emulator job and retained startup logs/screenshots. Workflow publication requires the runtime job to succeed, is an explicit optional input, and defaults to off.
+
+To retry Android runtime checks without rebuilding the app, run **Test signed beta on Android** with the preparation run ID. The signed artifact must still be available.
 
 The separate **Verify Android app** workflow runs for pushes/pull requests and does not publish Releases or receive the beta signing secrets. Its debug artifact is a development build and cannot be assumed to update an existing beta installation.
 

@@ -1,0 +1,68 @@
+name: Test signed beta on Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Preparation run containing the signed beta artifact
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      run_id:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  startup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download signed candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: hermes-home-signed-release-beta
+          path: release-assets/
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Download previous candidate for crash comparison
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v1.3.0-beta.1 --pattern '*.apk' --dir "$RUNNER_TEMP/previous-beta"
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          df -h /
+      - name: Test startup and authentication on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        timeout-minutes: 10
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disk-size: 2048M
+          disable-animations: true
+          emulator-boot-timeout: 180
+          script: |
+            python3 scripts/smoke_android_startup.py "$RUNNER_TEMP/previous-beta/Hermes-Home-v1.3.0-beta.1.apk" --output app/build/reports/startup/previous || echo 'Previous candidate did not pass; see comparison diagnostics.'
+            adb -e uninstall com.aistudio.homeserver.thns
+            python3 scripts/smoke_android_startup.py release-assets/*.apk --output app/build/reports/startup/candidate
+      - name: Upload startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-home-startup-diagnostics
+          path: app/build/reports/startup/
+          if-no-files-found: ignore
+          retention-days: 7

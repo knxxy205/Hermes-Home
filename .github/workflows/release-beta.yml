@@ -23,6 +23,10 @@ concurrency:
 jobs:
   prepare:
     runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.metadata.outputs.tag }}
+      version: ${{ steps.metadata.outputs.version }}
+      filename: ${{ steps.metadata.outputs.filename }}
     steps:
       - uses: actions/checkout@v5
       - name: Check production credential literals
@@ -126,32 +130,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Download previous candidate for crash comparison
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release download v1.3.0-beta.1 --pattern '*.apk' --dir "$RUNNER_TEMP/previous-beta"
-
-      - name: Enable emulator acceleration
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Test signed APK startup and authentication on Android
-        uses: reactivecircus/android-emulator-runner@v2
-        timeout-minutes: 8
-        with:
-          api-level: 34
-          target: google_apis
-          arch: x86_64
-          disk-size: 2048M
-          disable-animations: true
-          emulator-boot-timeout: 180
-          script: |
-            python3 scripts/smoke_android_startup.py "$RUNNER_TEMP/previous-beta/Hermes-Home-v1.3.0-beta.1.apk" --output app/build/reports/startup/previous || echo 'Previous candidate did not pass; see comparison diagnostics.'
-            adb -e uninstall com.aistudio.homeserver.thns
-            python3 scripts/smoke_android_startup.py app/build/outputs/apk/release/app-release.apk --output app/build/reports/startup/candidate
-
       - name: Upload verification diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -165,12 +143,29 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  smoke:
+    needs: prepare
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/smoke-beta.yml
+    with:
+      run_id: ${{ github.run_id }}
+
+  publish:
+    needs: [prepare, smoke]
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hermes-home-signed-release-beta
+          path: release-assets/
       - name: Prepare release notes
-        if: inputs.publish
         env:
-          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
-          APK_FILENAME: ${{ steps.metadata.outputs.filename }}
-          APP_VERSION: ${{ steps.metadata.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          APK_FILENAME: ${{ needs.prepare.outputs.filename }}
+          APP_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF
           Manage your homeserver from Android with SSH, SFTP, and self-hosted Hermes chat.
@@ -190,13 +185,13 @@ jobs:
           EOF
 
       - name: Publish prerelease
-        if: inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
-          APP_VERSION: ${{ steps.metadata.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          APP_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           gh release create "$RELEASE_TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
             --title "Hermes Home v${APP_VERSION} — Beta" \
             --notes-file "$RUNNER_TEMP/release-notes.md" \
             --target "$GITHUB_SHA" --prerelease
