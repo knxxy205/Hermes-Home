@@ -80,23 +80,37 @@ jobs:
           set -euo pipefail
           APK_PATH=app/build/outputs/apk/release/app-release.apk
           test -s "$APK_PATH"
-          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
-          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK_PATH" > "$RUNNER_TEMP/apk-verification.txt"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK_PATH" | tee "$RUNNER_TEMP/apk-verification.txt"
           EXPECTED_CERT=$(sha256sum "$RUNNER_TEMP/hermes-beta-signing.der" | cut -d ' ' -f 1)
           ACTUAL_CERT=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-verification.txt")
-          test "$ACTUAL_CERT" = "$EXPECTED_CERT"
+          test "$ACTUAL_CERT" = "$EXPECTED_CERT" || { echo 'APK certificate differs from the exported signing certificate.' >&2; exit 1; }
           # Verified against the retained v1.2-beta.28 APK, not just the current secret.
-          test "$ACTUAL_CERT" = '1638687c08785bb0c5887c09638834b173f0f7645813940e648c74ebd1dec79d'
-          APK_ANALYZER="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
-          test "$("$APK_ANALYZER" manifest debuggable "$APK_PATH")" = 'false'
-          test "$("$APK_ANALYZER" manifest application-id "$APK_PATH")" = 'com.aistudio.homeserver.thns'
-          test "$("$APK_ANALYZER" manifest version-name "$APK_PATH")" = "$APP_VERSION"
+          test "$ACTUAL_CERT" = '1638687c08785bb0c5887c09638834b173f0f7645813940e648c74ebd1dec79d' || { echo 'APK certificate differs from v1.2-beta.28.' >&2; exit 1; }
+          export APK_PATH BUILD_TOOLS
           python3 - <<'PY'
+          import os
+          import re
+          import subprocess
           from pathlib import Path
           from zipfile import ZipFile
-          with ZipFile('app/build/outputs/apk/release/app-release.apk') as apk:
+          apk_path = os.environ['APK_PATH']
+          aapt = str(Path(os.environ['BUILD_TOOLS']) / 'aapt')
+          badging = subprocess.check_output([aapt, 'dump', 'badging', apk_path], text=True)
+          package = badging.splitlines()[0]
+          print(package)
+          assert "name='com.aistudio.homeserver.thns'" in package, 'Application ID changed'
+          assert f"versionName='{os.environ['APP_VERSION']}'" in package, 'Wrong version name'
+          version_code = re.search(r'versionCode = (\d+)', Path('app/build.gradle.kts').read_text()).group(1)
+          assert f"versionCode='{version_code}'" in package, 'Wrong version code'
+          assert 'application-debuggable' not in badging, 'APK is debuggable'
+          manifest = subprocess.check_output([aapt, 'dump', 'xmltree', apk_path, 'AndroidManifest.xml'], text=True)
+          assert not re.search(r'android:debuggable[^\n]*0xffffffff', manifest), 'APK is debuggable'
+          assert 'com.google.firebase' not in manifest, 'Firebase manifest entry remains'
+          with ZipFile(apk_path) as apk:
               for name in ('LICENSE', 'PRIVACY.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md'):
                   assert apk.read('assets/' + name) == Path(name).read_bytes(), name
+          print('Release manifest and bundled legal documents verified.')
           PY
           mkdir -p release-assets
           cp "$APK_PATH" "release-assets/$APK_FILENAME"
@@ -111,6 +125,18 @@ jobs:
           path: release-assets/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload verification diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-home-release-diagnostics
+          path: |
+            ${{ runner.temp }}/apk-verification.txt
+            app/build/reports/tests/
+            app/build/reports/lint-results-release.*
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Prepare release notes
         if: inputs.publish
