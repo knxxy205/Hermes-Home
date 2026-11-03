@@ -26,7 +26,7 @@ The maintainer reported that the Files checks on the previous v1.2 beta worked o
 The 1.3 preparation adds a non-debuggable R8 release variant, removes unused Firebase/Gemini template SDKs, validates every Hermes HTTP redirect and resolved address, and packages privacy/security notices offline in Settings. A manual workflow prepares a signed APK with the existing beta identity, and defaults to artifact review rather than publication.
 
 - Android/JVM tests: 28 passed with zero failures, errors, or skipped tests, including five Hermes endpoint policy/integration tests.
-- Production credential-literal guard: four Python tests passed, and the current production source scan passed. This narrow guard supplements secret scanning; it does not establish that all secrets have been detected.
+- Production credential-literal guard: six Python tests passed after adding remembered Compose-state coverage, and the current production source scan passed. This narrow guard supplements secret scanning; it does not establish that all secrets have been detected.
 - Optimized unsigned release build and release lint passed. Lint reports zero errors and 84 warnings, mainly dependency updates, Kotlin API suggestions, and unused resources. Remaining warnings also include intentional base cleartext support for dynamic private HTTP destinations, a terminal accessibility issue, and private API use in bundled terminal code.
 - The final unsigned APK was inspected after the license/UI changes: application ID `com.aistudio.homeserver.thns`, version `1.3.0`, version code `4`, non-debuggable manifest, matching bundled legal documents, and no Firebase manifest entries or DEX class descriptors.
 - The maintainer approved [GPL-3.0-only](license-review.md) for original app code on 3 November 2026. Root `LICENSE` includes the full GPL text; the app and release artifact include it alongside third-party notices.
@@ -63,11 +63,12 @@ The [private 1.3.1 recovery prerelease](https://github.com/knxxy205/Hermes-Home/
 - Local automated checks passed: 28 tests, release build, and lint with zero errors and 84 warnings.
 - [Preparation run](https://github.com/knxxy205/Hermes-Home/actions/runs/41611454866): signed build and package verification passed; emulator startup failed because its image still required more disk space than was available, despite the requested smaller userdata partition. No application startup test executed in that run.
 - [Runtime checks on a separate fresh runner](https://github.com/knxxy205/Hermes-Home/actions/runs/41613642334) passed on an Android 14 x86_64 emulator: fresh installation of the exact signed recovery APK, launch, real device-PIN authentication, and navigation through Settings, Files, Hermes, and Terminal. Candidate crash log was empty; UI hierarchy and screenshot artifacts confirm the screens were reached. The same test reproduced the 1.3.0 crash during WorkManager database initialization. These checks do not cover live server connections, a retained-data update, a physical phone, or fingerprint hardware.
+- The maintainer subsequently reported that 1.3.1 runs smoothly on a physical phone. Individual SSH/SFTP, fingerprint, retained-data update, and background-work scenarios were not separately recorded.
 
 ### Before wider distribution
 
-1. Test the signed candidate on a device, including updating the earlier beta without clearing app data, biometric unlock, SSH/SFTP, Hermes chat, and background uploads.
-2. Confirm rotation/revocation of any historical credentials that were actually used, and resolve GitHub cached-commit removal before opening the repository. The old commit remained accessible through GitHub's API when checked on 3 November 2026.
+1. Record any remaining detailed phone checks for retained-data updates, fingerprint unlock, SSH/SFTP, Hermes chat, and background uploads; the maintainer has confirmed general operation on their phone.
+2. Complete [the credential-cleanup follow-up](credential-cleanup.md): establish whether historical credentials were used, revoke/rotate any real ones, and resolve GitHub cached-commit removal before opening the repository. The old commit remained accessible through GitHub's API when checked on 3 November 2026. Repository checks and targeted retained-APK checks passed, but live-credential status and Support purge remain unresolved.
 3. Securely back up the signing identity and finalize the private reporting channel.
 4. Review [the privacy policy](../PRIVACY.md), [security policy](../SECURITY.md), [third-party notices](../THIRD_PARTY_NOTICES.md), and [release instructions](release-build.md), then begin a small beta group. Public APK recipients must also have access to matching source and build instructions.
 

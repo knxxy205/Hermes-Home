@@ -8,11 +8,15 @@ ASSIGNMENT = re.compile(
     r'(?:\s*:\s*String\??)?\s*=\s*"([^"\r\n]*)"', re.IGNORECASE
 )
 SERVER_ENV = re.compile(r'\b(?:HERMES_API_KEY|TAILSCALE_AUTH_KEY)=([^\s\\";]+)')
+STATE_DEFAULT = re.compile(
+    r'\b(?:password|sshPassword|hermesKey|hermesApiKey|apiKey)\b'
+    r'[^\r\n"]{0,160}?mutableStateOf(?:<[^>]+>)?\(\s*"([^"\r\n]*)"', re.IGNORECASE
+)
 
 
 def findings(text):
     lines = set()
-    for pattern in (ASSIGNMENT, SERVER_ENV):
+    for pattern in (ASSIGNMENT, SERVER_ENV, STATE_DEFAULT):
         for match in pattern.finditer(text):
             value = match.group(1)
             if not value or (value.startswith('<') and value.endswith('>')):

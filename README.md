@@ -23,7 +23,7 @@ An SSH terminal, an SFTP file manager, and self-hosted AI chat in one native And
 </div>
 
 > [!IMPORTANT]
-> **Use 1.3.1 Recovery Beta.** The older `1.3.0-beta.1` has a startup crash and should not be installed. Version 1.3.1 passed fresh installation, launch, device-PIN authentication, and navigation through all four tabs on an Android 14 emulator. Physical-phone testing is still needed. See [the verification record](docs/release-readiness.md).
+> **Use 1.3.1 Recovery Beta.** The older `1.3.0-beta.1` has a startup crash and should not be installed. Version 1.3.1 passed fresh installation, launch, device-PIN authentication, and navigation through all four tabs on an Android 14 emulator. The maintainer also reports smooth operation on a physical phone. See [the verification record](docs/release-readiness.md).
 >
 > While this repository is private, APK downloads require GitHub sign-in and repository access.
 

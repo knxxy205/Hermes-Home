@@ -15,6 +15,18 @@ class CredentialGuardTest(unittest.TestCase):
     def test_does_not_confuse_preference_identifiers_with_credentials(self):
         self.assertEqual([], findings('const val KEY_SSH_PASSWORD = "enc_ssh_password"'))
 
+    def test_rejects_credentials_in_remembered_compose_state(self):
+        self.assertEqual([1, 2], findings(
+            'var sshPassword by remember { mutableStateOf("fixture-only") }\n'
+            'val hermesKey = mutableStateOf<String>("fixture-only")'
+        ))
+
+    def test_accepts_empty_or_user_supplied_compose_state(self):
+        self.assertEqual([], findings(
+            'var sshPassword by remember { mutableStateOf("") }\n'
+            'val hermesKey = mutableStateOf(config.hermesApiKey)'
+        ))
+
 
 if __name__ == '__main__':
     unittest.main()
