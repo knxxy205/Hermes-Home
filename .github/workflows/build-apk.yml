@@ -1,4 +1,4 @@
-name: Build and Release Debug APK
+name: Build and Publish Beta APK
 
 on:
   push:
@@ -144,7 +144,9 @@ jobs:
             CLEAN_REPO_NAME="android-app"
           fi
 
-          RELEASE_FILENAME="${CLEAN_REPO_NAME}-debug-build-${GITHUB_RUN_NUMBER}.apk"
+          APP_VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)
+          test -n "$APP_VERSION"
+          RELEASE_FILENAME="${CLEAN_REPO_NAME}-v${APP_VERSION}-beta.${GITHUB_RUN_NUMBER}.apk"
           TARGET_ASSET_PATH="${TEMP_ASSET_DIR}/${RELEASE_FILENAME}"
 
           cp "$VERIFIED_APK" "$TARGET_ASSET_PATH"
@@ -154,8 +156,8 @@ jobs:
             exit 1
           fi
 
-          RELEASE_TAG="debug-apk-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          RELEASE_TITLE="Debug APK Build #${GITHUB_RUN_NUMBER}"
+          RELEASE_TAG="v${APP_VERSION}-beta.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          RELEASE_TITLE="Hermes Home v${APP_VERSION} — Beta"
 
           echo "asset_path=${TARGET_ASSET_PATH}" >> "$GITHUB_OUTPUT"
           echo "asset_name=${RELEASE_FILENAME}" >> "$GITHUB_OUTPUT"
@@ -198,24 +200,46 @@ jobs:
               ;;
           esac
 
-          RELEASE_NOTES=$(cat <<EOF
-          ### Automated Debug APK Build
-          - **Build System**: Built automatically by GitHub Actions
-          - **Run Number**: #${GITHUB_RUN_NUMBER}
-          - **Run Attempt**: #${GITHUB_RUN_ATTEMPT}
-          - **Source Commit SHA**: ${GITHUB_SHA}
-          - **Type**: Debug APK intended for testing and development
-          - **Signature**: Signed with the persistent Hermes Home testing key
-          - **Source code**: https://github.com/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.zip (commit ${GITHUB_SHA})
-          - **Notice**: This is not a Play Store production release.
-          EOF
-          )
+          RELEASE_NOTES_FILE="${RUNNER_TEMP}/hermes-home-release-notes.md"
+          cat > "$RELEASE_NOTES_FILE" <<EOF
+          Manage your homeserver from Android with an SSH terminal, SFTP files, and self-hosted Hermes chat.
 
-          gh release create "$RELEASE_TAG" "$ASSET_PATH" \
-            --title "$RELEASE_TITLE" \
-            --notes "$RELEASE_NOTES" \
-            --target "$GITHUB_SHA" \
-            --latest
+          ### Download
+          **[Download the Android APK](https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${ASSET_NAME})**
+
+          Requires Android 7.0 or later and network access to your own SSH server. Hermes chat requires a compatible endpoint.
+
+          ### Included
+          - Interactive SSH terminal and connection profiles.
+          - File browsing, multi-select, recursive search, and file information.
+          - Downloads to a folder you choose and background uploads.
+          - Self-hosted Hermes chat and encrypted local settings.
+
+          [Changelog](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/CHANGELOG.md) · [Setup guide](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/README.md)
+
+          ### Installation
+          Open the APK on your Android device and allow installation from that source when prompted. Updates use the persistent Hermes Home testing key.
+
+          This beta is a debug APK for testing. It is not a production or Play Store release. Folder downloads and automatic download resume are not supported yet.
+
+          <details>
+          <summary>Source and verification</summary>
+
+          Built and tested by GitHub Actions. APK checksums are available in SHA256SUMS.txt.
+
+          [Matching source archive](https://github.com/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.zip) · [Build details](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
+
+          </details>
+          EOF
+
+          CHECKSUM_FILE="$(dirname "$ASSET_PATH")/SHA256SUMS.txt"
+          (cd "$(dirname "$ASSET_PATH")" && sha256sum "$ASSET_NAME") > "$CHECKSUM_FILE"
+
+          gh release create "$RELEASE_TAG" "$ASSET_PATH" "$CHECKSUM_FILE" \
+             --title "$RELEASE_TITLE" \
+            --notes-file "$RELEASE_NOTES_FILE" \
+             --target "$GITHUB_SHA" \
+            --prerelease
 
       - name: Report APK download result
         if: always()

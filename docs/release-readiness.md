@@ -6,9 +6,12 @@ Review date: 2026-11-03. This is a record of local checks and remaining work, no
 
 - Gitleaks with its default rules and full redaction scanned all 31 commits reachable from the local Git refs and reported no findings.
 - A separate Gitleaks scan of the current `app/src/main` source also reported no findings with its default rules.
-- A separate check of historical Kotlin source found 14 password/API key assignment occurrences across old versions of the Settings preset code. These are historical versions of preset values, not necessarily 14 distinct credentials. They are absent from the current preset.
-- Before making the repository public, confirm those values were examples only. Rotate any that were ever used on a real server. Deleting a value from the latest commit does not remove it from Git history.
-- The scan does not establish that every possible credential format has been detected. No Git history was rewritten and no server credentials were changed.
+- A separate check found historical password/API key literals in Settings presets and sample server configuration. Four distinct credential/example values have been replaced across the reachable Git history, including branches and tags.
+- Exact-value scanning of the rewritten Git objects found zero occurrences of those removed values. The latest application source tree was unchanged by the rewrite; the change removed values from older versions.
+- Older GitHub APK releases, workflow runs/artifacts, and build caches are removed during this cleanup. The tested APK from Build #28 is retained as Hermes Home v1.2 Beta, with the same bytes and signing key. Its source tag and source links use the rewritten history.
+- Rotate or revoke every removed value that was ever used on a real server. Git cleanup does not invalidate a password, API key, or token. No server credentials have been changed by this cleanup.
+- Other checkouts, previously downloaded APKs, and GitHub's cached/unreachable objects can retain the old data. Keep the repository private until live credentials are rotated. GitHub Support may need to purge cached views of the old commits.
+- Scanning does not establish that every possible credential format has been detected. Use the rewritten history for future work; do not push old branches or tags back into the repository.
 
 ## Files verification
 
@@ -24,4 +27,4 @@ Local verification completed with `:app:testDebugUnitTest :app:assembleDebug`: 2
 4. Finalize the privacy policy, security reporting channel, and the app's license alongside third-party notices.
 5. Start a small beta group before wider promotion.
 
-The repository visibility and GitHub releases have not been changed as part of these local checks.
+Repository visibility remains private. The retained APK is still a testing build, not a production release.
