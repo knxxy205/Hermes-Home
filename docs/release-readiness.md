@@ -33,7 +33,7 @@ The 1.3 preparation adds a non-debuggable R8 release variant, removes unused Fir
 
 ## Signed candidate: 1.3.0-beta.1
 
-**Device review failed:** the maintainer reported a force close on both update and fresh installation. Do not install or promote this candidate. Its automated checks below established package/signature properties, not successful Android startup. A 1.3.1 candidate with minification and resource shrinking disabled is being prepared with emulator startup/authentication checks; the root cause is not yet confirmed.
+**Device review failed:** the maintainer reported a force close on both update and fresh installation, before the first screen. Do not install or promote this candidate. Its automated checks below established package/signature properties, not successful Android startup. The crash was subsequently reproduced on an Android 14 emulator: `androidx.startup.InitializationProvider` failed while initializing WorkManager with `NoSuchMethodException: androidx.work.impl.WorkDatabase_Impl.<init> []`. The optimized APK lacked the constructor needed for reflective database creation. The 1.3.1 recovery candidate disables minification/resource shrinking and passes the same emulator startup/authentication checks.
 
 The first 1.3.1 preparation run completed its signed build and package verification, but Android runtime checks did not start: the runner had about 5.7 GB free while the emulator requested a 7.4 GB userdata partition. That run was canceled. The workflow now uploads the verified APK before attempting emulator startup, limits the emulator disk to 2 GB, and bounds boot time. An available artifact must not be mistaken for a passed startup test.
 
@@ -62,7 +62,7 @@ The [private 1.3.1 recovery prerelease](https://github.com/knxxy205/Hermes-Home/
 - Local inspection of the downloaded signed APK verified its signature/certificate, checksum, version and application ID, non-debuggable status, and legal assets against the exact source commit.
 - Local automated checks passed: 28 tests, release build, and lint with zero errors and 84 warnings.
 - [Preparation run](https://github.com/knxxy205/Hermes-Home/actions/runs/41611454866): signed build and package verification passed; emulator startup failed because its image still required more disk space than was available, despite the requested smaller userdata partition. No application startup test executed in that run.
-- [Runtime checks on a separate fresh runner](https://github.com/knxxy205/Hermes-Home/actions/runs/41613642334) are independent of the build artifact. The recovery APK was made available for the requested phone test while that check was pending. The launch-crash cause remains unconfirmed.
+- [Runtime checks on a separate fresh runner](https://github.com/knxxy205/Hermes-Home/actions/runs/41613642334) passed on an Android 14 x86_64 emulator: fresh installation of the exact signed recovery APK, launch, real device-PIN authentication, and navigation through Settings, Files, Hermes, and Terminal. Candidate crash log was empty; UI hierarchy and screenshot artifacts confirm the screens were reached. The same test reproduced the 1.3.0 crash during WorkManager database initialization. These checks do not cover live server connections, a retained-data update, a physical phone, or fingerprint hardware.
 
 ### Before wider distribution
 

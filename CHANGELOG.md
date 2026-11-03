@@ -2,7 +2,8 @@
 
 ## Unreleased — beta preparation
 
-- Prepare 1.3.1 with version code 5 and minification/resource shrinking disabled after a launch crash was reported for 1.3.0-beta.1 on both update and fresh install. The root cause is not yet confirmed.
+- Prepare 1.3.1 with version code 5 and minification/resource shrinking disabled after a launch crash was reported for 1.3.0-beta.1 on both update and fresh install. Emulator logs reproduced the old crash: WorkManager initialization could not construct `androidx.work.impl.WorkDatabase_Impl` because the optimized APK lacked its no-argument constructor.
+- Confirm the signed 1.3.1 APK passes fresh installation, launch, device-PIN authentication, and navigation through Terminal, Files, Hermes, and Settings on an Android 14 emulator. Its crash log was empty; physical-phone testing remains outstanding.
 - Add signed-APK emulator checks for startup, device-credential unlock, and tab navigation before distributing review artifacts.
 - License Hermes Home's original code under GPL-3.0-only with maintainer approval; retain third-party notices and include the app license offline in Settings.
 - Prepare version 1.3.0 with a non-debuggable release variant, code/resource shrinking, and a manual signed-beta workflow that defaults to artifact review.
