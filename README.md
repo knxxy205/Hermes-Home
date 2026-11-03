@@ -4,6 +4,8 @@ Hermes Home is a native Android app for managing your own homeserver from your p
 
 The app is designed for private networks such as Tailscale. Keep SSH and Hermes services on your private network instead of exposing them directly to the public internet.
 
+**Beta status:** `1.3.0-beta.1` has a reported startup crash on both updates and fresh installations. Do not install that candidate. A `1.3.1` replacement is being prepared with code/resource shrinking disabled and signed-APK emulator startup checks. See [the verification record](docs/release-readiness.md).
+
 ## Features
 
 - **SSH terminal** with an interactive terminal emulator and host key confirmation.
@@ -55,7 +57,7 @@ gradle :app:assembleDebug
 
 The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. GitHub Actions runs checks and stores a CI debug artifact for pushes and pull requests. This artifact uses a development signing key and is for testing; it is not published to Releases and should not be used to update an existing GitHub beta installation.
 
-The distribution beta uses a non-debuggable, optimized release variant. See [release build and signing instructions](docs/release-build.md). The manual release workflow prepares an artifact for review before optional publication.
+The distribution beta uses a non-debuggable release variant. Minification and resource shrinking are disabled in the 1.3.1 recovery candidate while the launch regression is investigated. See [release build and signing instructions](docs/release-build.md). The manual release workflow tests the signed APK on an emulator and prepares an artifact for review before optional publication.
 
 ## Security and privacy
 
