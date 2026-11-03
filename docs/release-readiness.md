@@ -28,15 +28,29 @@ The 1.3 preparation adds a non-debuggable R8 release variant, removes unused Fir
 - Android/JVM tests: 28 passed with zero failures, errors, or skipped tests, including five Hermes endpoint policy/integration tests.
 - Production credential-literal guard: four Python tests passed, and the current production source scan passed. This narrow guard supplements secret scanning; it does not establish that all secrets have been detected.
 - Optimized unsigned release build and release lint passed. Lint reports zero errors and 84 warnings, mainly dependency updates, Kotlin API suggestions, and unused resources. Remaining warnings also include intentional base cleartext support for dynamic private HTTP destinations, a terminal accessibility issue, and private API use in bundled terminal code.
-- The merged release manifest is non-debuggable and has no Firebase providers. Final APK contents and signed-candidate verification are checked separately.
+- The final unsigned APK was inspected after the license/UI changes: application ID `com.aistudio.homeserver.thns`, version `1.3.0`, version code `4`, non-debuggable manifest, matching bundled legal documents, and no Firebase manifest entries or DEX class descriptors.
 - The maintainer approved [GPL-3.0-only](license-review.md) for original app code on 3 November 2026. Root `LICENSE` includes the full GPL text; the app and release artifact include it alongside third-party notices.
+
+## Signed candidate: 1.3.0-beta.1
+
+The [successful preparation run](https://github.com/knxxy205/Hermes-Home/actions/runs/41604258134) built and verified a signed candidate from source commit [`a5d671b12b791dde8be45c545047e3afdf419733`](https://github.com/knxxy205/Hermes-Home/commit/a5d671b12b791dde8be45c545047e3afdf419733). Publication was disabled; no new GitHub release or tag was created.
+
+- [Review artifact](https://github.com/knxxy205/Hermes-Home/actions/runs/41604258134/artifacts/13216021219): `hermes-home-signed-release-beta`, retained for 14 days. Repository access and GitHub sign-in are required. Extract the ZIP to obtain `Hermes-Home-v1.3.0-beta.1.apk`.
+- APK size: 2,295,417 bytes (approximately 2.3 MB).
+- APK SHA-256: `b5e50d7d04d78602f6bb14183cdae4e92b3e36ff7d66b730ff3328e8e07543be`.
+- Signing certificate SHA-256: `1638687c08785bb0c5887c09638834b173f0f7645813940e648c74ebd1dec79d`, independently matched to the retained v1.2 beta APK.
+- After downloading the artifact, local verification passed for the APK signature, checksum, application ID, version name/code, non-debuggable manifest, and exact bundled legal-document contents from the source commit. No Firebase manifest entries or DEX class descriptors were found.
+- The artifact includes `SHA256SUMS.txt`, `signature.txt`, `LICENSE`, and the privacy/security/third-party documents. Test and lint reports are retained in a separate diagnostics artifact for seven days.
+
+The app reports version `1.3.0`; the beta sequence is in the APK filename. Matching signing identity and a higher version code support an update from the retained 1.2 beta, but installation and runtime behavior still need device testing.
+
+For device review, keep a protected profile backup, then install the candidate over the existing beta without uninstalling or clearing app data. Check that saved profiles remain accessible, biometric/device unlock works, SSH/SFTP connections and file transfers work, private HTTP Hermes chat works, queued uploads still run, and the legal documents open offline from Settings.
 
 ## Remaining distribution work
 
-1. Produce and verify the signed 1.3 candidate with the existing GitHub beta signing identity.
-2. Test the signed candidate on a device, including updating the earlier beta without clearing app data, biometric unlock, SSH/SFTP, Hermes chat, and background uploads.
-3. Confirm rotation/revocation of any historical credentials that were actually used, and resolve GitHub cached-commit removal before opening the repository.
-4. Securely back up the signing identity and finalize the private reporting channel.
-5. Review [the privacy policy](../PRIVACY.md), [security policy](../SECURITY.md), [third-party notices](../THIRD_PARTY_NOTICES.md), and [release instructions](release-build.md), then begin a small beta group. Public APK recipients must also have access to matching source and build instructions.
+1. Test the signed candidate on a device, including updating the earlier beta without clearing app data, biometric unlock, SSH/SFTP, Hermes chat, and background uploads.
+2. Confirm rotation/revocation of any historical credentials that were actually used, and resolve GitHub cached-commit removal before opening the repository. The old commit remained accessible through GitHub's API when checked on 3 November 2026.
+3. Securely back up the signing identity and finalize the private reporting channel.
+4. Review [the privacy policy](../PRIVACY.md), [security policy](../SECURITY.md), [third-party notices](../THIRD_PARTY_NOTICES.md), and [release instructions](release-build.md), then begin a small beta group. Public APK recipients must also have access to matching source and build instructions.
 
-Repository visibility remains private. The retained APK is still a testing build, not a production release.
+Repository visibility remains private. The retained 1.2 release and the new 1.3 review candidate are beta builds; public distribution is still pending.
