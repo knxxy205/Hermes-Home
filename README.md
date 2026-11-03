@@ -4,7 +4,7 @@ Hermes Home is a native Android app for managing your own homeserver from your p
 
 The app is designed for private networks such as Tailscale. Keep SSH and Hermes services on your private network instead of exposing them directly to the public internet.
 
-**Beta status:** `1.3.0-beta.1` has a reported startup crash on both updates and fresh installations. Do not install that candidate. A `1.3.1` replacement is being prepared with code/resource shrinking disabled and signed-APK emulator startup checks. See [the verification record](docs/release-readiness.md).
+**Beta status:** `1.3.0-beta.1` has a reported startup crash on both updates and fresh installations. Do not install that candidate. [1.3.1 Recovery Beta](https://github.com/knxxy205/Hermes-Home/releases/tag/v1.3.1-beta.1) is available for private phone testing with code/resource shrinking disabled. Its signature and package checks passed; the earlier crash is not yet confirmed fixed. See [the verification record](docs/release-readiness.md).
 
 ## Features
 

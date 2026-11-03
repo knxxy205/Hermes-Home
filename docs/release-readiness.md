@@ -53,6 +53,19 @@ For the replacement's device review, keep a protected profile backup, then insta
 
 ## Remaining distribution work
 
+### Recovery candidate: 1.3.1-beta.1
+
+The [private 1.3.1 recovery prerelease](https://github.com/knxxy205/Hermes-Home/releases/tag/v1.3.1-beta.1) provides a [direct APK download](https://github.com/knxxy205/Hermes-Home/releases/download/v1.3.1-beta.1/Hermes-Home-v1.3.1-beta.1.apk) for phone testing. It was built from source commit `0d976789fbed90be077a55a3fcec6b0454436201`, with version code 5, minification/resource shrinking disabled, and the same beta signing certificate. It is non-debuggable.
+
+- Size: 13,764,601 bytes (about 13.8 MB).
+- SHA-256: `431b8a68b8a682ffaf0aa8860b8736c78295928212f7031a9239c5a428e4ac38`.
+- Local inspection of the downloaded signed APK verified its signature/certificate, checksum, version and application ID, non-debuggable status, and legal assets against the exact source commit.
+- Local automated checks passed: 28 tests, release build, and lint with zero errors and 84 warnings.
+- [Preparation run](https://github.com/knxxy205/Hermes-Home/actions/runs/41611454866): signed build and package verification passed; emulator startup failed because its image still required more disk space than was available, despite the requested smaller userdata partition. No application startup test executed in that run.
+- [Runtime checks on a separate fresh runner](https://github.com/knxxy205/Hermes-Home/actions/runs/41613642334) are independent of the build artifact. The recovery APK was made available for the requested phone test while that check was pending. The launch-crash cause remains unconfirmed.
+
+### Before wider distribution
+
 1. Test the signed candidate on a device, including updating the earlier beta without clearing app data, biometric unlock, SSH/SFTP, Hermes chat, and background uploads.
 2. Confirm rotation/revocation of any historical credentials that were actually used, and resolve GitHub cached-commit removal before opening the repository. The old commit remained accessible through GitHub's API when checked on 3 November 2026.
 3. Securely back up the signing identity and finalize the private reporting channel.
