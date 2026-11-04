@@ -1,6 +1,6 @@
 # Credential cleanup verification
 
-Review date: 3 November 2026. Repository visibility remains private. This record describes checks performed and unresolved dependencies; it is not a certification that historical credentials are invalid.
+Review date: 4 November 2026. Repository visibility remains private. This record describes checks performed and unresolved dependencies; it is not a certification that historical credentials are invalid.
 
 ## Repository verification
 
@@ -20,15 +20,21 @@ The previous cleanup recorded removal of four distinct credential/example values
 
 ## GitHub cached history
 
-The original commit still responds through GitHub's Git commit API despite being absent from all advertised branches and tags. A metadata comparison matched the 28 old commits to rewritten commits by unique author timestamp and commit message, identifying the original root as the earliest rewritten commit. This reconstruction is not the original `git-filter-repo` report.
+Before Support's purge, the original commit responded through GitHub's Git commit API despite being absent from all advertised branches and tags. A metadata comparison matched the 28 old commits to rewritten commits by unique author timestamp and commit message, identifying the original root as the earliest rewritten commit. This reconstruction is not the original `git-filter-repo` report.
 
 GitHub documents server garbage collection and cached-view removal as a Support operation. There is no repository-owner Git command or public purge API that completes that step. On 3 November 2026, the maintainer-approved private request was submitted through GitHub Support using the subject "Request review and purge of cached sensitive history — knxxy205/Hermes-Home" and issue type "General question or feature request". The report contains the original and rewritten commit identifiers, affected paths, verification results, and the explicitly unknown credential-revocation status; it omits credential values.
 
-The portal displayed "Thanks for getting in touch with us! Your message has been successfully submitted." That confirmation was saved outside the repository. The maintainer subsequently supplied the matching Support ticket title and confirmed case **#4945452**, status **Open**, in the Repositories category. The case number is now recorded from that maintainer-provided confirmation; the stored report body has not been independently reread. An open case does not establish policy acceptance or server-side deletion. Follow up on this existing case through the [private Support ticket portal](https://help.github.com/support/tickets). No purge confirmation has been received.
+The portal displayed "Thanks for getting in touch with us! Your message has been successfully submitted." The maintainer subsequently supplied the matching Support ticket title and confirmed case **#4945452** in the Repositories category. On 4 November 2026, the maintainer shared Support's reply from Finch: "I've cleared out unreferenced commits, and the commits should now return a 404 error." Support also recommended changing leaked credentials. The ticket's current open/closed state has not been rechecked. Follow up on the existing case through the [private Support ticket portal](https://help.github.com/support/tickets) if needed.
 
-After submission, the original commit `32c74b5e89ad5e1195d0d9012f6898e275ff2a01` still responded through the authenticated Git commit API. Repository visibility was rechecked as private.
+Independent authenticated checks on 4 November 2026 confirmed the following:
 
-GitHub also states that Support will only assist with sensitive-data removal where it determines the risk cannot be mitigated by rotating credentials. Support acceptance and eventual deletion must not be assumed.
+- The Git commit API returned **404** for original commit `32c74b5e89ad5e1195d0d9012f6898e275ff2a01`, original root `cc94ffeadcd3aa661ff2ef0c25597f34164dc76a`, and the two previously inspected historical commits `a74621473025fdaceb3ab958b315b2b703d434d1` and `6159ac5dfe23c5c1beaa194e235606a58afd620f`.
+- The REST commit endpoint returned **422**, with "No commit found for SHA", for each of those four identifiers.
+- The Contents API returned **404** for `app/src/main/java/com/example/ui/settings/SettingsScreen.kt` at the original commit.
+- The same authenticated Git commit API returned **200** for reachable `main` commit `98921068c204aea2fe7d340ae6f8fa2279f5091f`, confirming that the old-object failures were not caused by missing repository access.
+- Repository visibility remained private. The advertised `main` and all three retained release tags still pointed to the expected sanitized commits.
+
+Support has confirmed the purge, and these checks corroborate removal of the known cached commits. This verification covers the four known identifiers and one historical file; it does not enumerate every old blob or erase copies previously downloaded by others. Live-credential revocation remains separate and unresolved.
 
 Reference: [Removing sensitive data from a repository](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository#fully-removing-the-data-from-github).
 
@@ -44,4 +50,4 @@ Do not paste the old values into issues, Support drafts, screenshots, or public 
 
 The maintainer reports that 1.3.1 now runs smoothly on a physical phone. The exact signed candidate also passed installation, launch, device-PIN authentication, and four-tab navigation on an Android 14 emulator. These observations are separate from the historical-credential and GitHub-cache questions.
 
-Public visibility remains pending server-credential verification and resolution of the cached-history request. Do not describe either unresolved item as completed.
+The cached-history request has a Support purge confirmation and passed the checks above. Public visibility remains pending server-credential verification. Do not describe live-credential revocation as completed.

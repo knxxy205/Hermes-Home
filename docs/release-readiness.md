@@ -1,6 +1,6 @@
 # Beta release readiness
 
-Review date: 2026-11-03. This is a record of local checks and remaining work, not a security certification.
+Review date: 2026-11-04. This is a record of local checks and remaining work, not a security certification.
 
 ## Repository history
 
@@ -10,7 +10,7 @@ Review date: 2026-11-03. This is a record of local checks and remaining work, no
 - Exact-value scanning of the rewritten Git objects found zero occurrences of those removed values. The latest application source tree was unchanged by the rewrite; the change removed values from older versions.
 - Older GitHub APK releases, workflow runs/artifacts, and build caches are removed during this cleanup. The tested APK from Build #28 is retained as Hermes Home v1.2 Beta, with the same bytes and signing key. Its source tag and source links use the rewritten history.
 - Rotate or revoke every removed value that was ever used on a real server. Git cleanup does not invalidate a password, API key, or token. No server credentials have been changed by this cleanup.
-- Other checkouts, previously downloaded APKs, and GitHub's cached/unreachable objects can retain the old data. Keep the repository private until live credentials are rotated. GitHub Support may need to purge cached views of the old commits.
+- Other checkouts and previously downloaded APKs can retain the old data. GitHub Support confirmed purging unreferenced commits in case #4945452; authenticated checks on 4 November 2026 returned 404 for four known old commits through the Git commit API while the reachable main control returned 200. See [the cleanup record](credential-cleanup.md) for scope and endpoint details. Keep the repository private until live-credential verification is resolved.
 - Scanning does not establish that every possible credential format has been detected. Use the rewritten history for future work; do not push old branches or tags back into the repository.
 
 ## Files verification
@@ -68,7 +68,7 @@ The [private 1.3.1 recovery prerelease](https://github.com/knxxy205/Hermes-Home/
 ### Before wider distribution
 
 1. Record any remaining detailed phone checks for retained-data updates, fingerprint unlock, SSH/SFTP, Hermes chat, and background uploads; the maintainer has confirmed general operation on their phone.
-2. Complete [the credential-cleanup follow-up](credential-cleanup.md): establish whether historical credentials were used, revoke/rotate any real ones, and resolve GitHub cached-commit removal before opening the repository. The old commit remained accessible through GitHub's API when checked on 3 November 2026. The maintainer confirmed the submitted private Support request as case **#4945452**, status **Open**; no purge is confirmed. Repository checks and targeted retained-APK checks passed; live-credential status and Support purge remain unresolved.
+2. Complete [the live-credential follow-up](credential-cleanup.md): establish whether historical credentials were used and revoke/rotate any real ones before opening the repository. GitHub Support confirmed the purge in case **#4945452**, and authenticated checks on 4 November 2026 confirmed that four known old commits and one historical file are no longer served. Repository checks and targeted retained-APK checks passed; live-credential status remains unresolved.
 3. Securely back up the signing identity and finalize the private reporting channel.
 4. Review [the privacy policy](../PRIVACY.md), [security policy](../SECURITY.md), [third-party notices](../THIRD_PARTY_NOTICES.md), and [release instructions](release-build.md), then begin a small beta group. Public APK recipients must also have access to matching source and build instructions.
 
