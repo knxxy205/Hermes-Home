@@ -34,15 +34,21 @@ Independent authenticated checks on 4 November 2026 confirmed the following:
 - The same authenticated Git commit API returned **200** for reachable `main` commit `98921068c204aea2fe7d340ae6f8fa2279f5091f`, confirming that the old-object failures were not caused by missing repository access.
 - Repository visibility remained private. The advertised `main` and all three retained release tags still pointed to the expected sanitized commits.
 
-Support has confirmed the purge, and these checks corroborate removal of the known cached commits. This verification covers the four known identifiers and one historical file; it does not enumerate every old blob or erase copies previously downloaded by others. Live-credential revocation remains separate and unresolved.
+Support has confirmed the purge, and these checks corroborate removal of the known cached commits. This verification covers the four known identifiers and one historical file; it does not enumerate every old blob or erase copies previously downloaded by others. Credential status is recorded separately below.
 
 Reference: [Removing sensitive data from a repository](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository#fully-removing-the-data-from-github).
 
 ## Live credentials
 
-No SSH server, Hermes/API gateway, or Tailscale credential was revoked or changed by this audit. The maintainer could not confirm whether the historical values had been used or already replaced. There is no verified server-administration connection in this session from which to make those changes.
+This coding session has no verified server-administration connection and did not perform server changes directly. On 4 November 2026, the maintainer supplied these updates:
 
-Before public distribution, the corresponding service administrator needs to establish whether those values were real and used. Any real, reused value must be replaced or revoked at its source, then the phone's connection profile updated as necessary. Source-history rewriting, APK deletion, successful app authentication, and a clean Git scan do not establish credential revocation.
+- **SSH:** the maintainer reports that the current password differs from the historical password following a server reinstall after disk failure. No further SSH password change was performed in this session. Password reuse on other accounts or systems was not checked.
+- **Hermes gateway on port 8642:** the maintainer shared the homeserver agent's report of rotating `API_SERVER_KEY`. The agent reports that the pre-rotation key is rejected with **401**, the new key and the active `.env` key succeed with **200**, port 8642 remains active, the gateway service is active, and Telegram is connected in polling mode. These are server-agent-reported checks, not independent requests from this coding session. The report does not establish an exact comparison between the pre-rotation key and every historical literal.
+- **Other services:** the agent reports no changes to 9Router on port 20128, the SSH password, or the Telegram token during gateway rotation. The gateway key is distinct in purpose from the upstream provider key; moving clients to 9Router would not revoke the gateway credential.
+- **Phone follow-up:** any Hermes Home profile connecting to gateway port 8642 needs the new key entered privately, followed by a chat/model request to verify the updated profile. Completion of this phone check has not yet been reported.
+- **Tailscale:** the server agent's earlier read-only audit found no auth-key plaintext in its scoped locations. Whether the historical auth-key example was real, reused, expired, or revoked remains unknown; check the corresponding auth key in the admin console if applicable. Do not log out or delete the registered device to rotate a registration key.
+
+Any historical value still used elsewhere must be replaced or revoked at that source. Source-history rewriting and APK deletion do not invalidate credentials. The changed SSH password and gateway rotation above should not be described as verification of every historical credential or token.
 
 Do not paste the old values into issues, Support drafts, screenshots, or public documentation. Supply identifiers and affected paths when possible.
 
@@ -50,4 +56,4 @@ Do not paste the old values into issues, Support drafts, screenshots, or public 
 
 The maintainer reports that 1.3.1 now runs smoothly on a physical phone. The exact signed candidate also passed installation, launch, device-PIN authentication, and four-tab navigation on an Android 14 emulator. These observations are separate from the historical-credential and GitHub-cache questions.
 
-The cached-history request has a Support purge confirmation and passed the checks above. Public visibility remains pending server-credential verification. Do not describe live-credential revocation as completed.
+The cached-history request has a Support purge confirmation and passed the checks above. SSH password replacement and gateway rotation are recorded from the maintainer's reports. Repository visibility remains private; the updated phone profile check and the historical Tailscale auth-key status remain unresolved.
