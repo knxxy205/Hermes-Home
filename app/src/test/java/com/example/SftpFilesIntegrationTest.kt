@@ -88,4 +88,40 @@ class SftpFilesIntegrationTest {
             server.stop(true)
         }
     }
+
+    @Test fun resolveHomeAndBlankPathListingUseServerHome() = runBlocking {
+        val root = temp.newFolder("home-test")
+        File(root, "docs").mkdirs()
+        File(root, "docs/readme.md").writeText("hello")
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        SshTrust.initialize(context)
+        val server = SshServer.setUpDefaultServer().apply {
+            host = "127.0.0.1"
+            port = 0
+            keyPairProvider = SimpleGeneratorHostKeyProvider(temp.newFile("host-key2").toPath()).apply {
+                algorithm = "RSA"; keySize = 2048
+            }
+            fileSystemFactory = VirtualFileSystemFactory(root.toPath())
+            subsystemFactories = listOf(SftpSubsystemFactory.Builder().build())
+            setPasswordAuthenticator { user, password, _ -> user == "test" && password == "pass" }
+            start()
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val trust = scope.launch { SshTrust.pending.collect { it?.answer?.complete(true) } }
+        val manager = SftpManager()
+        val config = ServerConfig("127.0.0.1", server.port, "test", "pass")
+        try {
+            val home = manager.resolveHome(config)
+            assertTrue("Home should be a non-blank absolute path", home.startsWith("/"))
+            val listing = manager.listFiles("", config).getOrThrow()
+            assertTrue(listing.any { it.name == "docs" })
+            val explicitListing = manager.listFiles(home, config).getOrThrow()
+            assertEquals(listing.map { it.path }.toSet(), explicitListing.map { it.path }.toSet())
+        } finally {
+            manager.close()
+            trust.cancel()
+            scope.cancel()
+            server.stop(true)
+        }
+    }
 }

@@ -37,7 +37,7 @@ import org.json.JSONArray
 data class ImagePreview(val name: String, val bitmap: Bitmap? = null, val error: String? = null)
 
 data class FilesUiState(
-    val currentPath: String = "/",
+    val currentPath: String = "",
     val files: List<RemoteFileItem> = emptyList(),
     val isLoading: Boolean = false,
     val isSearching: Boolean = false,
@@ -127,8 +127,6 @@ class FilesViewModel(
             val parent = current.substringBeforeLast("/")
             val newPath = if (parent.isBlank()) "/" else parent
             navigateTo(newPath, config)
-        } else {
-            navigateTo("/", config)
         }
     }
 
@@ -138,8 +136,12 @@ class FilesViewModel(
         if (path != _uiState.value.currentPath) return
         val profileChanged = lastConfig != null && lastConfig != config
         lastConfig = config
+        if (profileChanged) {
+            _uiState.update { it.copy(currentPath = "", searchQuery = "") }
+        }
         listingJob?.cancel()
         val generation = ++listingGeneration
+        val effectivePath = _uiState.value.currentPath
         val query = if (profileChanged) "" else _uiState.value.searchQuery
         _uiState.update {
             it.copy(isLoading = query.isBlank(), isSearching = query.isNotBlank(), errorMessage = null,
@@ -149,10 +151,18 @@ class FilesViewModel(
             // Each request owns its channel, so an old blocking SFTP call cannot corrupt a new search.
             val manager = if (config.isSshConfigured) SftpManager() else sftpManager
             try {
+                // Resolve server home directory when path is blank (initial load or profile change).
+                val resolvedPath = if (effectivePath.isBlank()) {
+                    val home = manager.resolveHome(config, !config.isSshConfigured)
+                    if (generation == listingGeneration) {
+                        _uiState.update { it.copy(currentPath = home) }
+                    }
+                    home
+                } else effectivePath
                 if (query.isNotBlank()) kotlinx.coroutines.delay(300)
                 val (files, notice) = withContext(Dispatchers.IO) {
-                    if (query.isBlank()) manager.listFiles(path, config).getOrThrow() to null else {
-                        val result = manager.searchFiles(path, query, config, onProgress = { partial ->
+                    if (query.isBlank()) manager.listFiles(resolvedPath, config).getOrThrow() to null else {
+                        val result = manager.searchFiles(resolvedPath, query, config, onProgress = { partial ->
                             _uiState.update { if (generation == listingGeneration) it.copy(files = partial.files) else it }
                         }).getOrThrow()
                         val warnings = buildList {
@@ -163,7 +173,7 @@ class FilesViewModel(
                     }
                 }
                 ensureActive()
-                if (query.isBlank() && generation == listingGeneration) directorySnapshot = DirectorySnapshot(path, config, files)
+                if (query.isBlank() && generation == listingGeneration) directorySnapshot = DirectorySnapshot(resolvedPath, config, files)
                 if (generation == listingGeneration) _uiState.update {
                     it.copy(files = files, isLoading = false, isSearching = false, searchNotice = notice)
                 }

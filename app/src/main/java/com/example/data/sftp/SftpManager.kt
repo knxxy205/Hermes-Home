@@ -157,13 +157,20 @@ services:
         }
     }
 
+    suspend fun resolveHome(config: ServerConfig, useSandbox: Boolean = false): String = withContext(Dispatchers.IO) {
+        if (useSandbox || !config.isSshConfigured) return@withContext "/home/admin"
+        val sftp = getConnectedSftp(config)
+        sftp.home ?: "/"
+    }
+
     suspend fun listFiles(
         currentPath: String,
         config: ServerConfig,
         useSandbox: Boolean = false
     ): Result<List<RemoteFileItem>> = withContext(Dispatchers.IO) {
         if (useSandbox || !config.isSshConfigured) {
-            val list = sandboxFiles[currentPath] ?: mutableListOf()
+            val effectivePath = currentPath.ifBlank { "/home/admin" }
+            val list = sandboxFiles[effectivePath] ?: mutableListOf()
             // Sorted: folders first, then files alphabetically
             val sorted = list.sortedWith(compareBy<RemoteFileItem> { !it.isDirectory }.thenBy { it.name.lowercase() })
             return@withContext Result.success(sorted)
