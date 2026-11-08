@@ -4,9 +4,11 @@ Terminal emulator and canvas renderer
 Source: https://github.com/termux/termux-app
 Version: v0.118.0, commit 6e2689f55295fa444be8ac8592c527c2c5ef3253
 
-The Java files under com/termux/terminal and com/termux/view are unmodified
-upstream sources. They provide terminal emulation and rendering. The local
-process/JNI session is not instantiated; SSH transport is supplied by this app.
+The Java files under com/termux/terminal and com/termux/view originate from
+these upstream sources. TerminalRenderer.java is locally modified to render
+only the visible viewport rows, including partial rows during pixel scrolling.
+The other imported Java files are unmodified. The local process/JNI session is
+not instantiated; SSH transport is supplied by this app.
 
 Copyright the Termux contributors and the Android Terminal Emulator contributors.
 Upstream license declaration is included in termux-upstream.md. The repository

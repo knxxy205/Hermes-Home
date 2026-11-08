@@ -40,6 +40,8 @@ class EncryptedStorage(context: Context) {
         private const val KEY_HERMES_BASE_URL = "enc_hermes_base_url"
         private const val KEY_HERMES_API_KEY = "enc_hermes_api_key"
         private const val KEY_HERMES_MODEL = "enc_hermes_model"
+        private const val KEY_HERMES_PROVIDER = "hermes_provider"
+        private const val KEY_LLM_PROVIDERS = "enc_llm_providers"
 
         private const val KEY_ACTIVE_PROFILE_ID = "active_profile_id"
         private const val KEY_PROFILE_IDS = "saved_profile_ids"
@@ -179,7 +181,9 @@ class EncryptedStorage(context: Context) {
                     sshPassword = decrypt(encPass),
                     hermesBaseUrl = decrypt(encHermesUrl).ifBlank { "http://100.x.y.z:11434" },
                     hermesApiKey = decrypt(encHermesKey),
-                    hermesModel = decrypt(encHermesModel).ifBlank { "hermes-3-llama-3.1-8b" }
+                    hermesModel = if (prefs.contains("${PREFIX_PROFILE}${id}_hermes_model")) decrypt(encHermesModel) else "hermes-3-llama-3.1-8b",
+                    hermesProvider = prefs.getString("${PREFIX_PROFILE}${id}_hermes_provider", "custom") ?: "custom",
+                    llmProviders = decodeProviders(decrypt(prefs.getString("${PREFIX_PROFILE}${id}_llm_providers", "") ?: ""))
                 )
                 result.add(ConnectionProfile(id = id, name = name, config = config))
             }
@@ -206,6 +210,8 @@ class EncryptedStorage(context: Context) {
             .putString("${PREFIX_PROFILE}${profile.id}_hermes_base_url", encrypt(profile.config.hermesBaseUrl))
             .putString("${PREFIX_PROFILE}${profile.id}_hermes_api_key", encrypt(profile.config.hermesApiKey))
             .putString("${PREFIX_PROFILE}${profile.id}_hermes_model", encrypt(profile.config.hermesModel))
+            .putString("${PREFIX_PROFILE}${profile.id}_hermes_provider", profile.config.hermesProvider)
+            .putString("${PREFIX_PROFILE}${profile.id}_llm_providers", encrypt(encodeProviders(profile.config.withCurrentProviderSaved().llmProviders).toString()))
             .apply()
     }
 
@@ -244,6 +250,8 @@ class EncryptedStorage(context: Context) {
             .putString(KEY_HERMES_BASE_URL, encrypt(config.hermesBaseUrl))
             .putString(KEY_HERMES_API_KEY, encrypt(config.hermesApiKey))
             .putString(KEY_HERMES_MODEL, encrypt(config.hermesModel))
+            .putString(KEY_HERMES_PROVIDER, config.hermesProvider)
+            .putString(KEY_LLM_PROVIDERS, encrypt(encodeProviders(config.withCurrentProviderSaved().llmProviders).toString()))
             .apply()
     }
 
@@ -280,7 +288,9 @@ class EncryptedStorage(context: Context) {
             sshPassword = pass,
             hermesBaseUrl = hermesUrl,
             hermesApiKey = hermesKey,
-            hermesModel = hermesModel
+            hermesModel = hermesModel,
+            hermesProvider = prefs.getString(KEY_HERMES_PROVIDER, "custom") ?: "custom",
+            llmProviders = decodeProviders(decrypt(prefs.getString(KEY_LLM_PROVIDERS, "") ?: ""))
         )
     }
 
@@ -329,6 +339,7 @@ class EncryptedStorage(context: Context) {
                         put("content", msg.content)
                         put("timestamp", msg.timestamp)
                         put("isError", msg.isError)
+                        put("isServerOutput", msg.isServerOutput)
                         put("actionType", msg.actionType ?: "")
                         val actionsArr = JSONArray()
                         msg.interactiveActions.forEach { actionsArr.put(it) }
@@ -389,7 +400,8 @@ class EncryptedStorage(context: Context) {
                         timestamp = m.optLong("timestamp", System.currentTimeMillis()),
                         isError = m.optBoolean("isError", false),
                         interactiveActions = actList,
-                        actionType = actionType
+                        actionType = actionType,
+                        isServerOutput = m.optBoolean("isServerOutput", false)
                     )
                 )
             }
@@ -557,6 +569,8 @@ class EncryptedStorage(context: Context) {
                     put("hermesBaseUrl", p.config.hermesBaseUrl)
                     put("hermesApiKey", p.config.hermesApiKey)
                     put("hermesModel", p.config.hermesModel)
+                    put("hermesProvider", p.config.hermesProvider)
+                    put("llmProviders", encodeProviders(p.config.withCurrentProviderSaved().llmProviders))
                 }
                 arr.put(obj)
             }
@@ -613,7 +627,9 @@ class EncryptedStorage(context: Context) {
                     sshPassword = pass,
                     hermesBaseUrl = hermesUrl,
                     hermesApiKey = hermesKey,
-                    hermesModel = hermesModel
+                    hermesModel = hermesModel,
+                    hermesProvider = obj.optString("hermesProvider", "custom"),
+                    llmProviders = decodeProviders(obj.optJSONObject("llmProviders")?.toString().orEmpty())
                 )
                 importedProfiles.add(ConnectionProfile(id = id, name = name, config = config))
             }

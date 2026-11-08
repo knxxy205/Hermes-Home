@@ -22,10 +22,13 @@ import kotlinx.coroutines.delay
 class SshTerminalSession(
     val id: String = UUID.randomUUID().toString(),
     initialTitle: String = "bash",
-    private val coroutineScope: CoroutineScope
+    private val coroutineScope: CoroutineScope,
+    private val onConnectionRequested: () -> Unit = {}
 ) {
     private val _title = MutableStateFlow(initialTitle)
     val title: StateFlow<String> = _title.asStateFlow()
+    var lastConfig: ServerConfig? = null
+        private set
 
     fun setTitle(newTitle: String) {
         _title.value = newTitle
@@ -44,6 +47,10 @@ class SshTerminalSession(
     val revision = _revision.asStateFlow()
     private var resizeJob: Job? = null
     private var connectJob: Job? = null
+    private var reconnectJob: Job? = null
+    @Volatile private var keepConnected = false
+    private val _reconnectAttempt = MutableStateFlow(0)
+    val reconnectAttempt = _reconnectAttempt.asStateFlow()
     private val generation = java.util.concurrent.atomic.AtomicLong()
     @Volatile private var columns = 80
     @Volatile private var rows = 24
@@ -56,8 +63,9 @@ class SshTerminalSession(
                 outputStream?.let { out -> out.write(input.bytes); out.flush() }
             } catch (e: Exception) {
                 if (input.generation == generation.get()) {
-                    _connectionState.value = TerminalConnectionState.Error("Gagal mengirim input: ${e.message}")
-                    disconnectInternal()
+                     _connectionState.value = TerminalConnectionState.Error("Gagal mengirim input: ${e.message}")
+                     disconnectInternal()
+                     lastConfig?.let { if (SshConnectionPolicy.canRetry(e)) scheduleReconnect(it, 1) }
                 }
             }
         }
@@ -65,7 +73,7 @@ class SshTerminalSession(
     private val pendingOutput = Channel<ByteArray>(64)
     private val outputJob by lazy { coroutineScope.launch(Dispatchers.Default) {
         for (first in pendingOutput) {
-            delay(16)
+            delay(8)
             engine.append(first)
             // Bound each batch so a continuous producer cannot starve drawing or resizing.
             repeat(63) { pendingOutput.tryReceive().getOrNull()?.let(engine::append) }
@@ -80,7 +88,7 @@ class SshTerminalSession(
         resizeJob?.cancel()
         if (cols == this.columns && lines == this.rows) return
         resizeJob = coroutineScope.launch(Dispatchers.IO) {
-            delay(180)
+            delay(100)
             this@SshTerminalSession.columns = cols
             this@SshTerminalSession.rows = lines
             engine.resize(cols, lines)
@@ -102,11 +110,13 @@ class SshTerminalSession(
 
     fun connect(config: ServerConfig) {
         if (_connectionState.value is TerminalConnectionState.Connected ||
-            _connectionState.value is TerminalConnectionState.Connecting
-        ) {
-            return
-        }
+            (_connectionState.value is TerminalConnectionState.Connecting && _reconnectAttempt.value == 0)) return
+        reconnectJob?.cancel()
+        keepConnected = true
+        openConnection(config, 0)
+    }
 
+    private fun openConnection(config: ServerConfig, attempt: Int) {
         if (!config.isSshConfigured) {
             _connectionState.value = TerminalConnectionState.Error(
                 "Konfigurasi SSH belum lengkap. Buka tab Settings untuk mengisi Host, User, dan Password."
@@ -115,7 +125,10 @@ class SshTerminalSession(
             return
         }
 
+        lastConfig = config
+        _reconnectAttempt.value = attempt
         _connectionState.value = TerminalConnectionState.Connecting
+        onConnectionRequested()
         appendOutput("\u001B[33mConnecting to ${config.sshUser}@${config.sshHost}:${config.sshPort} via Tailscale...\u001B[0m\n")
 
         disconnectInternal()
@@ -132,10 +145,7 @@ class SshTerminalSession(
                 newSession.userInfo = trust
                 newSession.setConfig("StrictHostKeyChecking", "ask")
                 newSession.setConfig("PreferredAuthentications", "password,keyboard-interactive")
-                newSession.setConfig("TCPKeepAlive", "yes")
-                newSession.serverAliveInterval = 10000 // Send keep-alive every 10 seconds
-                newSession.serverAliveCountMax = 10   // Allow up to 10 missed keep-alives
-                newSession.timeout = 0                // No socket read timeout
+                SshConnectionPolicy.configure(newSession)
                 newSession.connect(15000)
 
                 val newChannel = newSession.openChannel("shell") as ChannelShell
@@ -156,7 +166,10 @@ class SshTerminalSession(
                 }
 
                 withContext(Dispatchers.Main) {
-                    if (generation.get() == token) _connectionState.value = TerminalConnectionState.Connected(config.sshHost, config.sshUser)
+                    if (generation.get() == token) {
+                        _reconnectAttempt.value = 0
+                        _connectionState.value = TerminalConnectionState.Connected(config.sshHost, config.sshUser)
+                    }
                 }
 
                 val outputReader = coroutineScope.launch(Dispatchers.IO) {
@@ -171,11 +184,13 @@ class SshTerminalSession(
                 }
                 readJob = coroutineScope.launch(Dispatchers.IO) {
                     outputReader.join()
+                    delay(100)
                     synchronized(this@SshTerminalSession) {
                         if (generation.get() == token) {
                             _connectionState.value = TerminalConnectionState.Disconnected
                             appendOutput("\n[DISCONNECTED] Server menutup sesi (exit ${newChannel.exitStatus}).\n")
                             disconnectInternal()
+                            if (newChannel.exitStatus < 0) scheduleReconnect(config, 1)
                         }
                     }
                 }
@@ -189,12 +204,16 @@ class SshTerminalSession(
                     appendOutput("\u001B[90mTip: Pastikan Tailscale VPN aktif di HP dan host dapat dijangkau.\u001B[0m\n")
                 }
                 disconnectInternal()
+                if (SshConnectionPolicy.canRetry(e)) scheduleReconnect(config, attempt + 1)
             }
         }
     }
 
     fun startSandboxMode() {
+        keepConnected = false
+        reconnectJob?.cancel()
         disconnectInternal()
+        lastConfig = null
         isSandboxMode = true
         isSandboxNano = false
         _connectionState.value = TerminalConnectionState.Connected("homeserver.tailscale", "admin")
@@ -389,9 +408,24 @@ class SshTerminalSession(
     }
 
     fun disconnect() {
+        keepConnected = false
+        reconnectJob?.cancel()
+        _reconnectAttempt.value = 0
         disconnectInternal()
         _connectionState.value = TerminalConnectionState.Disconnected
         appendOutput("\n\u001B[33m[DISCONNECTED] Sesi SSH dihentikan oleh pengguna.\u001B[0m\n")
+    }
+
+    private fun scheduleReconnect(config: ServerConfig, attempt: Int) {
+        if (!keepConnected) return
+        val wait = SshConnectionPolicy.retryDelay(attempt) ?: return
+        _reconnectAttempt.value = attempt
+        _connectionState.value = TerminalConnectionState.Connecting
+        appendOutput("\n[SSH] Menghubungkan ulang ($attempt/6)…\n")
+        reconnectJob = coroutineScope.launch {
+            delay(wait)
+            if (keepConnected) openConnection(config, attempt)
+        }
     }
 
     @Synchronized private fun disconnectInternal() {
@@ -400,11 +434,6 @@ class SshTerminalSession(
         connectJob = null
         readJob?.cancel()
         readJob = null
-        try {
-            // Keep the JSch-owned stream alive until the channel is closed.
-        } catch (_: Exception) {}
-        outputStream = null
-
         try {
             channel?.disconnect()
         } catch (_: Exception) {}
@@ -418,6 +447,8 @@ class SshTerminalSession(
     }
 
     fun destroy() {
+        keepConnected = false
+        reconnectJob?.cancel()
         resizeJob?.cancel()
         disconnectInternal()
         pendingOutput.close()

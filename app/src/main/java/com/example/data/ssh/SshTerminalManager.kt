@@ -17,7 +17,8 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SshTerminalManager(
-    externalScope: CoroutineScope? = null
+    externalScope: CoroutineScope? = null,
+    private val onConnectionRequested: () -> Unit = {}
 ) {
     private val coroutineScope = externalScope ?: CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
 
@@ -28,7 +29,7 @@ class SshTerminalManager(
     val activeSessionIndex: StateFlow<Int> = _activeSessionIndex.asStateFlow()
 
     private val _activeSession = MutableStateFlow<SshTerminalSession>(
-        SshTerminalSession(initialTitle = "bash 1", coroutineScope = coroutineScope)
+        SshTerminalSession(initialTitle = "bash 1", coroutineScope = coroutineScope, onConnectionRequested = onConnectionRequested)
     )
     val activeSession: StateFlow<SshTerminalSession> = _activeSession.asStateFlow()
 
@@ -52,9 +53,10 @@ class SshTerminalManager(
         if (currentList.size >= 5) {
             return _activeSession.value
         }
+        if (currentList.isEmpty()) _activeSession.value.destroy()
         val sessionNum = currentList.size + 1
         val newTitle = title ?: "bash $sessionNum"
-        val newSession = SshTerminalSession(initialTitle = newTitle, coroutineScope = coroutineScope)
+        val newSession = SshTerminalSession(initialTitle = newTitle, coroutineScope = coroutineScope, onConnectionRequested = onConnectionRequested)
         
         val updated = currentList + newSession
         _sessions.value = updated
@@ -78,43 +80,56 @@ class SshTerminalManager(
 
     fun closeSession(index: Int) {
         val list = _sessions.value
-        if (list.size <= 1) return // Keep at least one session
-
         if (index in list.indices) {
             val closingSession = list[index]
             closingSession.destroy()
+
+            if (list.size == 1) {
+                val fresh = SshTerminalSession(initialTitle = "Terminal", coroutineScope = coroutineScope)
+                _sessions.value = emptyList()
+                _activeSessionIndex.value = 0
+                _activeSession.value = fresh
+                return
+            }
 
             val updated = list.toMutableList()
             updated.removeAt(index)
             _sessions.value = updated
 
-            val newIndex = if (_activeSessionIndex.value >= updated.size) {
-                updated.lastIndex
-            } else if (_activeSessionIndex.value == index) {
-                (index - 1).coerceAtLeast(0)
-            } else {
-                _activeSessionIndex.value.coerceAtMost(updated.lastIndex)
-            }
+            val retained = updated.indexOfFirst { it.id == _activeSession.value.id }
+            val newIndex = if (retained >= 0) retained else (index - 1).coerceIn(0, updated.lastIndex)
             _activeSessionIndex.value = newIndex
             _activeSession.value = updated[newIndex]
         }
     }
 
     // Forwarding functions to active session
+    fun ensureActiveSession(): SshTerminalSession =
+        if (_sessions.value.isEmpty()) createSession() else _activeSession.value
+
     fun connect(config: ServerConfig) {
-        _activeSession.value.connect(config)
+        ensureActiveSession().connect(config)
     }
 
     fun disconnect() {
         _activeSession.value.disconnect()
     }
 
+    fun disconnectAll() { _sessions.value.forEach { it.disconnect() } }
+
+    fun onHostConnectionRequested() { onConnectionRequested() }
+
+    fun destroy() {
+        _sessions.value.forEach { it.destroy() }
+        if (_sessions.value.isEmpty()) _activeSession.value.destroy()
+    }
+
     fun startSandboxMode() {
-        _activeSession.value.startSandboxMode()
+        ensureActiveSession().startSandboxMode()
     }
 
     fun sendCommand(command: String) {
-        _activeSession.value.sendCommand(command)
+        ensureActiveSession().sendCommand(command)
     }
 
     fun sendRawBytes(bytes: ByteArray) {

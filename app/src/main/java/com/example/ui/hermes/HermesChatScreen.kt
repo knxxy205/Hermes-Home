@@ -57,6 +57,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.isShiftPressed
+import com.example.data.preferences.AppPreferences
 import androidx.compose.runtime.Composable
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -77,6 +93,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -105,10 +125,12 @@ import com.example.ui.theme.TerminalGreen
 import com.example.ui.theme.TerminalRed
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.UserMessageSurface
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.ui.i18n.tr
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -121,16 +143,27 @@ fun HermesChatScreen(
     onConfigUpdated: ((ServerConfig) -> Unit)? = null,
     onExecuteInTerminal: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
-    messages: SnapshotStateList<ChatMessage> = remember { mutableStateListOf() }
+    messages: SnapshotStateList<ChatMessage> = remember { mutableStateListOf() },
+    preferences: AppPreferences = AppPreferences(),
+    onOpenSettings: () -> Unit = {},
+    onOpenConnectionSettings: () -> Unit = onOpenSettings,
+    onPreferencesUpdated: (AppPreferences) -> Unit = {}
 ) {
     val context = LocalContext.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
     var pendingCommand by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     val listState = rememberLazyListState()
 
-    var inputText by remember { mutableStateOf("") }
+    var inputText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
     var isRunningServerCommand by remember { mutableStateOf(false) }
+    var sessionLoaded by remember { mutableStateOf(false) }
+    var modelPicker by remember { mutableStateOf(false) }
+    var modelQuery by remember { mutableStateOf("") }
+    var confirmClear by remember { mutableStateOf(false) }
+    var commandMenu by remember { mutableStateOf(false) }
+    LaunchedEffect(modelPicker) { if (modelPicker) keyboardController?.hide() }
 
     var currentSessionId by remember {
         mutableStateOf(encryptedStorage?.getActiveChatSessionId() ?: UUID.randomUUID().toString())
@@ -180,7 +213,8 @@ fun HermesChatScreen(
                 messages.add(
                     ChatMessage(
                         role = "assistant",
-                        content = "⚡ **Hasil Eksekusi di Server:** (`$command`)\n```bash\n$output\n```"
+                        content = "**Hasil dari server**\n\nPerintah: `$command`\n\n```text\n$output\n```",
+                        isServerOutput = true
                     )
                 )
                 autoSaveCurrentSession()
@@ -190,8 +224,9 @@ fun HermesChatScreen(
                 messages.add(
                     ChatMessage(
                         role = "assistant",
-                        content = "❌ **Gagal mengeksekusi di server:**\n${err.localizedMessage ?: "Unknown error"}",
-                        isError = true
+                        content = "Gagal mengeksekusi di server:\n${err.localizedMessage ?: "Unknown error"}",
+                        isError = true,
+                        isServerOutput = true
                     )
                 )
                 autoSaveCurrentSession()
@@ -200,8 +235,15 @@ fun HermesChatScreen(
         }
     }
 
-    fun startNewChatSession() {
-        autoSaveCurrentSession()
+    fun startNewChatSession(discardCurrent: Boolean = false) {
+        if (!discardCurrent && currentSessionTitle == "Obrolan Baru" && messages.none { it.role == "user" }) {
+            inputText = ""
+            commandMenu = false
+            pendingCommand = null
+            showHistorySheet = false
+            return
+        }
+        if (!discardCurrent) autoSaveCurrentSession()
         val newSession = HermesChatSession(
             title = "Obrolan Baru",
             messages = listOf(
@@ -214,6 +256,9 @@ fun HermesChatScreen(
         encryptedStorage?.saveChatSession(newSession)
         currentSessionId = newSession.id
         currentSessionTitle = newSession.title
+        inputText = ""
+        commandMenu = false
+        pendingCommand = null
         messages.clear()
         messages.addAll(newSession.messages)
         refreshSavedSessions()
@@ -249,6 +294,7 @@ fun HermesChatScreen(
                 )
             )
         }
+        sessionLoaded = true
     }
 
     val slashCommands = remember {
@@ -258,6 +304,7 @@ fun HermesChatScreen(
             "/history" to "Riwayat percakapan",
             "/sesi" to "Alias untuk /history",
             "/status" to "Status koneksi dan model",
+            "/effort" to "Atur effort: low, medium, high, atau default",
             "/profile" to "Pilih profil jaringan",
             "/profiles" to "Alias untuk /profile",
             "/help" to "Daftar perintah",
@@ -270,9 +317,11 @@ fun HermesChatScreen(
     // Scroll to bottom when messages list updates
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: messages.lastIndex
+            if (lastVisible >= messages.lastIndex - 2 || messages.last().role == "user") listState.animateScrollToItem(messages.lastIndex)
         }
     }
+    LaunchedEffect(currentSessionId) { if (messages.isNotEmpty()) listState.scrollToItem(messages.lastIndex) }
 
     fun copyToClipboard(text: String) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -294,11 +343,7 @@ fun HermesChatScreen(
                     }
                 }
                 onConfigUpdated?.invoke(updated)
-                messages.add(ChatMessage(
-                    role = "assistant",
-                    content = "✅ Model Hermes berhasil diubah ke:\n👉 *$actionValue*"
-                ))
-                autoSaveCurrentSession()
+                Toast.makeText(context, "Model aktif: $actionValue", Toast.LENGTH_SHORT).show()
             }
             "select_profile" -> {
                 val profiles = encryptedStorage?.loadProfiles() ?: emptyList()
@@ -317,8 +362,16 @@ fun HermesChatScreen(
     }
 
     fun doSendMessage(prompt: String) {
-        if (prompt.isBlank() || isSending) return
+        if (prompt.isBlank() || isSending || isRunningServerCommand || !sessionLoaded) return
         val rawPrompt = prompt.trim()
+        val modelCommand = rawPrompt.substringBefore(' ').lowercase()
+        if (modelCommand == "/model" || modelCommand == "/models") {
+            val modelName = rawPrompt.substringAfter(' ', "").trim()
+            inputText = ""
+            modelQuery = modelName
+            modelPicker = true
+            return
+        }
         val userMsg = ChatMessage(role = "user", content = rawPrompt)
         messages.add(userMsg)
         autoSaveCurrentSession()
@@ -328,62 +381,8 @@ fun HermesChatScreen(
         if (rawPrompt.startsWith("/")) {
             val parts = rawPrompt.split("\\s+".toRegex())
             val cmd = parts.getOrNull(0)?.lowercase() ?: ""
-            val arg = parts.drop(1).joinToString(" ")
 
             when (cmd) {
-                "/model", "/models" -> {
-                    if (arg.isNotBlank()) {
-                        val targetModel = arg.trim()
-                        val updated = serverConfig.copy(hermesModel = targetModel)
-                        encryptedStorage?.saveConfig(updated)
-                        encryptedStorage?.getActiveProfileId()?.let { pId ->
-                            val profiles = encryptedStorage.loadProfiles()
-                            val currentP = profiles.find { it.id == pId }
-                            if (currentP != null) {
-                                encryptedStorage.saveProfile(currentP.copy(config = updated))
-                            }
-                        }
-                        onConfigUpdated?.invoke(updated)
-                        messages.add(ChatMessage(
-                            role = "assistant",
-                            content = "✅ Model Hermes berhasil diubah ke:\n👉 *$targetModel*"
-                        ))
-                        autoSaveCurrentSession()
-                    } else {
-                        // Detect models from 9router & LLM server
-                        isSending = true
-                        scope.launch {
-                            val res = hermesClient.fetchAvailableModels(serverConfig)
-                            isSending = false
-                            res.onSuccess { models ->
-                                if (models.isNotEmpty()) {
-                                    messages.add(ChatMessage(
-                                        role = "assistant",
-                                        content = "🤖 *Model Terdeteksi di 9router / Server (${models.size}):*\n\nModel aktif saat ini:\n👉 *${serverConfig.hermesModel.ifBlank { "Belum diset" }}*\n\nKetuk nama model di bawah untuk mengaktifkan:",
-                                        interactiveActions = models,
-                                        actionType = "select_model"
-                                    ))
-                                } else {
-                                    messages.add(ChatMessage(
-                                        role = "assistant",
-                                        content = "⚠️ Tidak ada model ditemukan pada endpoint:\n`${serverConfig.hermesBaseUrl}`\n\nPastikan 9router/Ollama aktif atau periksa Base URL di tab Settings.",
-                                        isError = true
-                                    ))
-                                }
-                                autoSaveCurrentSession()
-                            }.onFailure { err ->
-                                messages.add(ChatMessage(
-                                    role = "assistant",
-                                    content = "❌ Gagal memindai model: ${err.localizedMessage ?: "Unknown error"}\n\nPeriksa koneksi Tailscale / IP server di Settings.",
-                                    isError = true
-                                ))
-                                autoSaveCurrentSession()
-                            }
-                        }
-                    }
-                    return
-                }
-
                 "/history", "/sesi" -> {
                     refreshSavedSessions()
                     showHistorySheet = true
@@ -406,10 +405,28 @@ fun HermesChatScreen(
                             • SSH Host: `${serverConfig.sshHost}:${serverConfig.sshPort}`
                             • Base URL: `${serverConfig.hermesBaseUrl}`
                             • Model AI: *${serverConfig.hermesModel.ifBlank { "Belum diset" }}*
-                            • Status Mode: ${if (isConfigured) "🟢 Terhubung ke Homeserver" else "🟡 Mode Standby"}
+                            • Effort: *${preferences.chatEffort.ifBlank { "Default" }}*
+                            • Konfigurasi: ${if (isConfigured) "Endpoint dan model tersimpan" else "Belum lengkap"}
                             • API Key: ${if (serverConfig.hermesApiKey.isNotBlank()) "Tersedia (Bearer Token)" else "Tanpa Key (Lokal)"}
                         """.trimIndent()
                     ))
+                    autoSaveCurrentSession()
+                    return
+                }
+
+                "/effort" -> {
+                    val requested = parts.getOrNull(1)?.lowercase().orEmpty()
+                    val normalized = when (requested) {
+                        "default", "auto", "off", "reset" -> ""
+                        "low", "medium", "high" -> requested
+                        else -> null
+                    }
+                    if (normalized == null) {
+                        messages.add(ChatMessage(role = "assistant", content = "Effort saat ini: **${preferences.chatEffort.ifBlank { "Default" }}**. Gunakan `/effort low`, `/effort medium`, `/effort high`, atau `/effort default`."))
+                    } else {
+                        onPreferencesUpdated(preferences.copy(chatEffort = normalized))
+                        messages.add(ChatMessage(role = "assistant", content = "Effort chat diatur ke **${normalized.ifBlank { "Default" }}**."))
+                    }
                     autoSaveCurrentSession()
                     return
                 }
@@ -444,9 +461,10 @@ fun HermesChatScreen(
                         content = """
                             📋 *Perintah Telegram Hermes:*
                             • `/model` - Deteksi otomatis & pilih model di 9router/server
-                            • `/model [nama]` - Ganti model AI langsung
+                            • `/model [nama]` - Cari dan pilih model dari server
                             • `/history` - Buka riwayat & sesi percakapan
                             • `/status` - Cek koneksi, profil, & model aktif
+                            • `/effort low|medium|high` - Atur reasoning effort, `/effort default` untuk mengikuti model
                             • `/profile` - Ganti profil (Rumah / Tailscale)
                             • `/clear` - Bersihkan obrolan saat ini
                             • `/help` - Tampilkan bantuan ini
@@ -465,7 +483,9 @@ fun HermesChatScreen(
                 userMessage = userMsg.content,
                 history = messages.dropLast(1),
                 config = serverConfig,
-                useSandboxFallback = !serverConfig.isHermesConfigured
+                useSandboxFallback = !serverConfig.isHermesConfigured,
+                responseInstructions = preferences.responseInstructions(),
+                reasoningEffort = preferences.chatEffort.ifBlank { null }
             )
             isSending = false
             result.onSuccess { reply ->
@@ -485,18 +505,21 @@ fun HermesChatScreen(
     }
 
     pendingCommand?.let { (command, interactive) ->
+        val activeTerminal = sshTerminalManager?.activeSession?.value
+        val targetConfig = if (interactive) activeTerminal?.lastConfig ?: serverConfig else serverConfig
+        val simulated = !targetConfig.isSshConfigured || (interactive && activeTerminal?.connectionState?.value is com.example.data.ssh.TerminalConnectionState.Connected && activeTerminal.lastConfig == null)
         AlertDialog(
             onDismissRequest = { pendingCommand = null },
-            title = { Text("Jalankan perintah di server?") },
+            title = { Text(if (interactive) tr("Jalankan perintah di terminal?", "Run this command in the terminal?") else tr("Jalankan perintah di server?", "Run this command on the server?")) },
             text = { Column {
-                Text("Tujuan: ${serverConfig.sshUser}@${serverConfig.sshHost}")
+                Text(if (simulated) tr("Tujuan: simulasi lokal", "Destination: local simulation") else tr("Tujuan:", "Destination:") + " ${targetConfig.sshUser}@${targetConfig.sshHost}:${targetConfig.sshPort}")
                 Text(command, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 12.dp))
             } },
             confirmButton = { TextButton(onClick = {
                 pendingCommand = null
                 if (interactive) onExecuteInTerminal?.invoke(command) else handleRunOnServer(command)
-            }) { Text("Jalankan") } },
-            dismissButton = { TextButton(onClick = { pendingCommand = null }) { Text("Batal") } }
+            }) { Text(tr("Jalankan", "Run")) } },
+            dismissButton = { TextButton(onClick = { pendingCommand = null }) { Text(tr("Batal", "Cancel")) } }
         )
     }
     Column(
@@ -504,84 +527,14 @@ fun HermesChatScreen(
             .fillMaxSize()
             .background(NavyDarkBackground)
     ) {
-        // Screen Header
-        CustomScreenHeader(
-            icon = Icons.Default.Forum,
-            title = "Hermes",
-            subtitle = if (currentSessionTitle.isNotBlank() && currentSessionTitle != "Obrolan Baru") {
-                "$currentSessionTitle • ${serverConfig.hermesModel}"
-            } else if (serverConfig.isHermesConfigured) {
-                "${serverConfig.hermesModel} @ ${serverConfig.hermesBaseUrl}"
-            } else {
-                "Asisten pribadi untuk server kamu"
-            },
-            trailingContent = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    // New Chat Button
-                    IconButton(
-                        onClick = { startNewChatSession() },
-                        modifier = Modifier
-                            .size(34.dp)
-                            .testTag("new_chat_button")
-                    ) {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = "New Chat",
-                            tint = BurntOrange,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+        val busy = isSending || isRunningServerCommand || !sessionLoaded
+        HermesChatHeader(currentSessionTitle, serverConfig.hermesModel, !busy,
+            onModel = { modelQuery = ""; modelPicker = true },
+            onNew = { startNewChatSession() },
+            onHistory = { refreshSavedSessions(); showHistorySheet = true },
+            onClear = { confirmClear = true })
 
-                    // History Sessions Button
-                    IconButton(
-                        onClick = {
-                            refreshSavedSessions()
-                            showHistorySheet = true
-                        },
-                        modifier = Modifier
-                            .size(34.dp)
-                            .testTag("chat_history_button")
-                    ) {
-                        Icon(
-                            Icons.Default.History,
-                            contentDescription = "Chat History",
-                            tint = BurntOrange,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // Clear Current Chat Button
-                    IconButton(
-                        onClick = {
-                            messages.clear()
-                            messages.add(
-                                ChatMessage(
-                                    role = "assistant",
-                                    content = "Riwayat chat telah dibersihkan. Siap menerima perintah baru."
-                                )
-                            )
-                            autoSaveCurrentSession()
-                        },
-                        modifier = Modifier
-                            .size(34.dp)
-                            .testTag("clear_chat_button")
-                    ) {
-                        Icon(
-                            Icons.Default.DeleteSweep,
-                            contentDescription = "Clear Chat",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
-                }
-            }
-        )
-
-        // Telegram-style Slash Command Suggestions Bar
-        Row(
+        if (commandMenu || inputText.startsWith("/")) Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
@@ -589,14 +542,14 @@ fun HermesChatScreen(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            slashCommands.forEach { (cmd, desc) ->
+            slashCommands.filter { (cmd, _) -> cmd !in listOf("/models", "/sesi", "/profiles", "/start", "/reset") && (inputText == "/" || !inputText.startsWith("/") || cmd.startsWith(inputText.substringBefore(' '))) }.forEach { (cmd, desc) ->
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(12.dp))
                         .background(NavyDarkSurface)
                         .border(1.dp, NavyDarkBorder, RoundedCornerShape(12.dp))
-                        .clickable { doSendMessage(cmd) }
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .clickable(enabled = !busy, role = Role.Button) { commandMenu = false; doSendMessage(cmd) }
+                        .heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -624,34 +577,44 @@ fun HermesChatScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(28.dp)
         ) {
-            items(messages, key = { it.id }) { msg ->
+            items(messages, key = { it.id }, contentType = { it.role }) { msg ->
                 ChatMessageItem(
                     message = msg,
                     currentModel = serverConfig.hermesModel,
-                    onCopy = { copyToClipboard(msg.content) },
+                    fontSize = preferences.chatFontSize,
+                    showTime = preferences.chatTimestamps,
                     onActionClick = { actionType, value ->
-                        handleInteractiveAction(actionType, value)
+                        if (!busy) {
+                            if (actionType == "select_model") { modelQuery = value; modelPicker = true }
+                            else handleInteractiveAction(actionType, value)
+                        }
                     },
-                    onRunOnServer = { cmd -> pendingCommand = cmd to false },
-                    onExecuteInTerminal = if (onExecuteInTerminal != null) ({ cmd -> pendingCommand = cmd to true }) else null
+                    onRunOnServer = if (!busy) ({ cmd -> pendingCommand = cmd to false }) else null,
+                    onExecuteInTerminal = if (!busy && onExecuteInTerminal != null) ({ cmd -> pendingCommand = cmd to true }) else null
                 )
             }
 
             if (isSending) {
-                item {
+                item(key = "thinking", contentType = "thinking") {
                     HermesThinkingIndicator()
                 }
             }
         }
 
-        // Input Row Bar: Modern Pill Layout with Standalone Circular Send Button
+        val olderMessages by remember { androidx.compose.runtime.derivedStateOf {
+            messages.isNotEmpty() && (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) < messages.lastIndex - 1
+        } }
+        if (olderMessages) TextButton(onClick = { scope.launch { listState.animateScrollToItem(messages.lastIndex) } }, modifier = Modifier.fillMaxWidth()) { Text(tr("Pesan terbaru", "Latest messages"), color = BurntOrange) }
+        Text(tr("Pesan untuk Hermes", "Message Hermes"), color = TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(start = 20.dp, top = 2.dp))
+        if (isRunningServerCommand) Text(tr("Perintah sedang berjalan…", "Command running…"), color = TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+        // Keep editing available while a reply is loading; sending waits for completion.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 6.dp),
+                .padding(horizontal = 12.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Pill Container
@@ -660,19 +623,18 @@ fun HermesChatScreen(
                     .weight(1f)
                     .clip(RoundedCornerShape(24.dp))
                     .background(NavyDarkCard)
-                    .border(1.dp, NavyDarkBorder, RoundedCornerShape(24.dp))
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(24.dp))
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Slash quick toggle button
                 Box(
                     modifier = Modifier
-                        .size(30.dp)
+                        .size(44.dp)
                         .clip(CircleShape)
-                        .background(BurntOrangeBadgeBg)
-                        .clickable {
-                            inputText = if (inputText.isEmpty()) "/" else ""
-                        },
+                        .clickable(role = Role.Button) {
+                            commandMenu = !commandMenu
+                        }.semantics { contentDescription = "Perintah chat" },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -689,19 +651,28 @@ fun HermesChatScreen(
                     onValueChange = { inputText = it },
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                        .testTag("hermes_chat_input"),
+                        .padding(horizontal = 6.dp, vertical = 8.dp)
+                        .testTag("hermes_chat_input")
+                        .semantics { contentDescription = "Pesan untuk Hermes" }
+                        .onPreviewKeyEvent { event ->
+                            if (preferences.chatEnterSends && event.key == Key.Enter && event.type == KeyEventType.KeyDown && !event.isShiftPressed) {
+                                if (!busy) doSendMessage(inputText)
+                                true
+                            } else false
+                        },
+                    keyboardOptions = KeyboardOptions(imeAction = if (preferences.chatEnterSends) ImeAction.Send else ImeAction.Default),
+                    keyboardActions = KeyboardActions(onSend = { if (!busy) doSendMessage(inputText) }),
                     textStyle = MaterialTheme.typography.bodyMedium.copy(
                         color = TextPrimary,
-                        fontSize = 14.sp
+                        fontSize = preferences.chatFontSize.sp
                     ),
                     cursorBrush = SolidColor(BurntOrange),
-                    maxLines = 6,
+                    maxLines = 4,
                     decorationBox = { innerTextField ->
                         if (inputText.isEmpty()) {
                             Text(
-                                text = "Tanya Hermes atau ketik /...",
-                                color = TextSecondary.copy(alpha = 0.55f),
+                                text = tr("Tulis pesan…", "Write a message…"),
+                                color = TextSecondary,
                                 fontSize = 13.sp
                             )
                         }
@@ -709,49 +680,6 @@ fun HermesChatScreen(
                     }
                 )
 
-                // Clean inline Paste button if input is empty
-                if (inputText.isEmpty()) {
-                    IconButton(
-                        onClick = {
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
-                            if (!clip.isNullOrBlank()) {
-                                inputText = clip
-                                Toast.makeText(context, "Ditempel dari clipboard", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(context, "Clipboard kosong", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        modifier = Modifier
-                            .size(32.dp)
-                            .testTag("hermes_paste_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ContentPaste,
-                            contentDescription = "Paste text",
-                            tint = BurntOrange,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                } else {
-                    // Clean Clear button if text entered
-                    IconButton(
-                        onClick = { inputText = "" },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Clear input",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Standalone Circular Send / Enter Button (Always active solid orange, matching Terminal)
             IconButton(
                 onClick = {
                     if (!isSending) {
@@ -762,32 +690,41 @@ fun HermesChatScreen(
                         }
                     }
                 },
-                enabled = true,
+                enabled = inputText.isNotBlank() && !busy,
                 modifier = Modifier
-                    .size(48.dp)
+                    .size(44.dp)
                     .clip(CircleShape)
-                    .background(BurntOrange)
+                    .background(if (inputText.isNotBlank() && !busy) BurntOrange else NavyDarkSurface)
                     .testTag("hermes_send_button")
             ) {
                 if (isSending) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
-                        color = Color.White,
+                        color = BurntOrange,
                         strokeWidth = 2.5.dp
                     )
                 } else {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Send,
                         contentDescription = "Send",
-                        tint = Color.White,
+                        tint = if (inputText.isNotBlank() && !busy) MaterialTheme.colorScheme.onPrimary else TextSecondary,
                         modifier = Modifier.size(20.dp)
                     )
                 }
+            }
             }
         }
 
         Spacer(modifier = Modifier.height(6.dp))
     }
+
+    if (modelPicker) ModelPickerSheet(hermesClient, serverConfig,
+        onSelect = { handleInteractiveAction("select_model", it); modelPicker = false },
+        onDismiss = { modelPicker = false }, onOpenSettings = { modelPicker = false; onOpenConnectionSettings() }, initialQuery = modelQuery)
+    if (confirmClear) AlertDialog(onDismissRequest = { confirmClear = false }, title = { Text(tr("Bersihkan obrolan ini?", "Clear this chat?")) },
+        text = { Text(tr("Pesan pada percakapan ini akan dihapus. Percakapan lain tetap tersimpan.", "Messages in this conversation will be removed. Other conversations are kept.")) },
+        confirmButton = { TextButton(onClick = { messages.clear(); autoSaveCurrentSession(); confirmClear = false }) { Text(tr("Bersihkan", "Clear")) } },
+        dismissButton = { TextButton(onClick = { confirmClear = false }) { Text(tr("Batal", "Cancel")) } })
 
     // Modal Bottom Sheet: History & Saved Chat Sessions
     if (showHistorySheet) {
@@ -827,7 +764,7 @@ fun HermesChatScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Riwayat Obrolan Hermes",
+                            text = tr("Riwayat obrolan Hermes", "Hermes chat history"),
                             color = TextPrimary,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold
@@ -847,7 +784,7 @@ fun HermesChatScreen(
                 }
 
                 Text(
-                    text = "Lanjutkan percakapan sebelumnya atau mulai obrolan baru.",
+                    text = tr("Lanjutkan percakapan sebelumnya atau mulai obrolan baru.", "Continue a conversation or start a new chat."),
                     color = TextSecondary,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(top = 2.dp, bottom = 14.dp)
@@ -857,7 +794,7 @@ fun HermesChatScreen(
                 Button(
                     onClick = {
                         showHistorySheet = false
-                        startNewChatSession()
+                                                    startNewChatSession(discardCurrent = true)
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -869,13 +806,13 @@ fun HermesChatScreen(
                     Icon(
                         Icons.Default.Add,
                         contentDescription = null,
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Mulai Obrolan Baru",
-                        color = Color.White,
+                        text = tr("Mulai obrolan baru", "Start new chat"),
+                        color = MaterialTheme.colorScheme.onPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp
                     )
@@ -892,7 +829,7 @@ fun HermesChatScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Belum ada riwayat percakapan tersimpan",
+                            text = tr("Belum ada riwayat percakapan tersimpan", "No saved conversations yet"),
                             color = TextSecondary,
                             fontSize = 13.sp
                         )
@@ -932,6 +869,7 @@ fun HermesChatScreen(
                                         shape = RoundedCornerShape(12.dp)
                                     )
                                     .clickable { switchSession(session) }
+                                    .testTag("chat_session_${session.id}")
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -989,7 +927,7 @@ fun HermesChatScreen(
                                             startNewChatSession()
                                         }
                                     },
-                                    modifier = Modifier.size(30.dp)
+                                    modifier = Modifier.size(44.dp).testTag("delete_chat_${session.id}")
                                 ) {
                                     Icon(
                                         Icons.Default.Delete,
@@ -1011,62 +949,10 @@ fun HermesChatScreen(
 
 @Composable
 private fun HermesThinkingIndicator() {
-    val transition = rememberInfiniteTransition(label = "hermes_thinking")
-    val first by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(620), repeatMode = RepeatMode.Reverse),
-        label = "thinking_dot_1"
-    )
-    val second by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(620, delayMillis = 180), repeatMode = RepeatMode.Reverse),
-        label = "thinking_dot_2"
-    )
-    val third by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(620, delayMillis = 360), repeatMode = RepeatMode.Reverse),
-        label = "thinking_dot_3"
-    )
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(30.dp)
-                .clip(CircleShape)
-                .background(BurntOrangeBadgeBg)
-                .border(1.dp, BurntOrangeBorder, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Default.Forum, null, tint = BurntOrange, modifier = Modifier.size(15.dp))
-        }
-        Spacer(Modifier.width(8.dp))
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp))
-                .background(Color.White)
-                .border(1.dp, Color(0xffe6edf7), RoundedCornerShape(topStart = 8.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp))
-                .padding(horizontal = 14.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            listOf(first, second, third).forEach { alpha ->
-                Box(
-                    Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(BurntOrange.copy(alpha = alpha))
-                )
-                Spacer(Modifier.width(4.dp))
-            }
-            Text("Hermes sedang berpikir", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-        }
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = BurntOrange)
+        Text(tr("Menunggu jawaban Hermes…", "Waiting for Hermes…"), color = TextSecondary, fontSize = 12.sp)
     }
 }
 
@@ -1074,10 +960,11 @@ private fun HermesThinkingIndicator() {
 fun ChatMessageItem(
     message: ChatMessage,
     currentModel: String = "",
-    onCopy: () -> Unit,
     onActionClick: (String?, String) -> Unit = { _, _ -> },
     onRunOnServer: ((String) -> Unit)? = null,
-    onExecuteInTerminal: ((String) -> Unit)? = null
+    onExecuteInTerminal: ((String) -> Unit)? = null,
+    fontSize: Int = 15,
+    showTime: Boolean = false
 ) {
     val isUser = message.role == "user"
     val bubbleShape = RoundedCornerShape(
@@ -1088,7 +975,7 @@ fun ChatMessageItem(
     )
 
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("chat_message_${message.id}"),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
     ) {
         Row(
@@ -1096,91 +983,43 @@ fun ChatMessageItem(
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
         ) {
-            if (!isUser) {
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(CircleShape)
-                        .background(BurntOrangeBadgeBg)
-                        .border(1.dp, BurntOrangeBorder, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Default.Forum,
-                        contentDescription = null,
-                        tint = if (message.isError) TerminalRed else BurntOrange,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-            }
-
             Box(
                 modifier = Modifier
-                    .widthIn(max = if (isUser) 320.dp else 380.dp)
-                    .clip(bubbleShape)
-                    .background(
-                        when {
-                            message.isError -> Color(0xfffff1f2)
-                            isUser -> Color(0xff3278e8)
-                            else -> Color.White
-                        }
-                    )
-                    .border(
-                        1.dp,
-                        when {
-                            message.isError -> Color(0xfffecdd3)
-                            isUser -> Color(0xff2f6dd0)
-                            else -> Color(0xffe6edf7)
-                        },
-                        bubbleShape
-                    )
-                    .padding(horizontal = 16.dp, vertical = 13.dp)
+                    .then(if (isUser) Modifier.widthIn(max = 300.dp).clip(bubbleShape).background(UserMessageSurface) else Modifier.fillMaxWidth())
+                    .padding(horizontal = if (isUser) 20.dp else 0.dp, vertical = if (isUser) 16.dp else 0.dp)
             ) {
                 Column {
-                    if (!isUser) {
+                    if (message.isError || showTime) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Forum, null, tint = if (message.isError) TerminalRed else BurntOrange, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(6.dp))
                             Text(
-                                text = if (message.isError) "HERMES · PERLU PERHATIAN" else "HERMES  ·  ${currentModel.ifBlank { "AI ASSISTANT" }}",
-                                color = if (message.isError) TerminalRed else BurntOrange,
-                                fontSize = 10.sp,
+                                text = (if (message.isError) tr("Perlu diperiksa", "Needs attention") else if (isUser) tr("Kamu", "You") else "Hermes") +
+                                    if (showTime) "  ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestamp))}" else "",
+                                color = if (message.isError) TerminalRed else TextSecondary,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                letterSpacing = 0.45.sp
+                                letterSpacing = 0.sp
                             )
                         }
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(if (isUser) 12.dp else 8.dp))
                     }
                     SelectionContainer {
-                        // Render text with code block highlighting if content contains markdown code blocks
-                        val content = message.content
-                        if (content.contains("```")) {
-                            FormattedCodeAndTextMessage(
-                                rawContent = content,
-                                onRunOnServer = onRunOnServer,
-                                onExecuteInTerminal = onExecuteInTerminal
-                            )
-                        } else {
-                            Text(
-                                text = content,
-                                color = when { message.isError -> TerminalRed; isUser -> Color.White; else -> TextPrimary },
-                                fontSize = 14.sp,
-                                lineHeight = 23.sp
-                            )
-                        }
+                        HermesMessageBody(message.content, fontSize,
+                            textColor = if (message.isError) TerminalRed else TextPrimary,
+                            onRun = if (message.canOfferCommandActions) onRunOnServer else null,
+                            onTerminal = if (message.canOfferCommandActions) onExecuteInTerminal else null,
+                            fillWidth = !isUser)
                     }
 
                     // Interactive Action Buttons (e.g. detected models or profiles)
                     if (message.interactiveActions.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = if (message.actionType == "select_model") "Pilih model untuk mengaktifkan:" else "Pilih profil jaringan:",
+                            text = if (message.actionType == "select_model") tr("Pilih model untuk mengaktifkan:", "Select a model to activate:") else tr("Pilih profil jaringan:", "Select a network profile:"),
                             color = TextSecondary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(2.dp))
                         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                             message.interactiveActions.forEach { actionLabel ->
                                 val isSelected = actionLabel == currentModel
@@ -1195,7 +1034,7 @@ fun ChatMessageItem(
                                             shape = RoundedCornerShape(10.dp)
                                         )
                                         .clickable { onActionClick(message.actionType, actionLabel) }
-                                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                                        .heightIn(min = 48.dp).padding(horizontal = 10.dp, vertical = 7.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
@@ -1215,7 +1054,7 @@ fun ChatMessageItem(
                                     )
                                     if (isSelected) {
                                         Text(
-                                            text = "AKTIF",
+                                            text = tr("AKTIF", "ACTIVE"),
                                             color = BurntOrange,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold
@@ -1226,34 +1065,6 @@ fun ChatMessageItem(
                         }
                     }
 
-                    if (!isUser && !message.isError) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Start,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(Color(0xfff4f7fc))
-                                    .border(1.dp, Color(0xffe6edf7), RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                IconButton(
-                                    onClick = onCopy,
-                                    modifier = Modifier.size(20.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.ContentCopy,
-                                        contentDescription = "Copy message",
-                                        tint = TextSecondary,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -1354,13 +1165,13 @@ fun FormattedCodeAndTextMessage(
                                         Icon(
                                             Icons.Default.PlayArrow,
                                             contentDescription = "Run on Server",
-                                            tint = Color.White,
+                                            tint = MaterialTheme.colorScheme.onPrimary,
                                             modifier = Modifier.size(12.dp)
                                         )
                                         Spacer(modifier = Modifier.width(3.dp))
                                         Text(
                                             "Run on Server",
-                                            color = Color.White,
+                                            color = MaterialTheme.colorScheme.onPrimary,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold
                                         )

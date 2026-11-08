@@ -68,6 +68,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -116,6 +117,14 @@ import com.example.ui.theme.TextSecondary
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.example.data.worker.SftpUploadWorker
+import com.example.R
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalResources
+import com.example.data.transfer.*
+import com.example.data.preferences.AppPreferencesStore
+import com.example.data.security.EncryptedStorage
+import androidx.compose.material.icons.filled.History
+import com.example.ui.i18n.tr
 
 @Composable
 fun FilesScreen(
@@ -125,47 +134,64 @@ fun FilesScreen(
     onAskHermesAboutFile: ((fileName: String, content: String) -> Unit)? = null,
     onOpenSettings: (() -> Unit)? = null,
     isTabActive: Boolean = true,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    preferencesStore: AppPreferencesStore? = null,
+    transferDestination: TransferDestination? = null,
+    onTransferDestinationHandled: () -> Unit = {},
+    onSelectTransferProfile: (String) -> ServerConfig? = { null },
+    bottomOverlayInset: androidx.compose.ui.unit.Dp = 0.dp
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
+    val appearanceStore = remember { preferencesStore ?: AppPreferencesStore(context) }
+    val preferences by appearanceStore.state.collectAsState()
+    val transferStore = remember { TransferStore(context) }
+    val batches by transferStore.state.collectAsState()
+    var showTransfers by rememberSaveable { mutableStateOf(false) }
+    var selectedTransfer by rememberSaveable { mutableStateOf<String?>(null) }
+    var fileActions by remember { mutableStateOf(false) }
+    var sortMenu by remember { mutableStateOf(false) }
+    var reselectSource by remember { mutableStateOf<UploadBatch?>(null) }
+    DisposableEffect(transferStore, appearanceStore) { onDispose { transferStore.close(); if (preferencesStore == null) appearanceStore.close() } }
     val uiState by viewModel.uiState.collectAsState()
     val uploadWorkInfos by remember(context) {
         WorkManager.getInstance(context).getWorkInfosByTagFlow(SftpUploadWorker.TAG)
     }.collectAsState(initial = emptyList())
-    val currentUpload = uploadWorkInfos
-        .filter { it.state == WorkInfo.State.RUNNING }
-        .firstOrNull()
-        ?: uploadWorkInfos
-            .filter { it.state == WorkInfo.State.ENQUEUED }
-            .firstOrNull()
-        ?: uploadWorkInfos.firstOrNull()
-    val uploadRunning = currentUpload?.state == WorkInfo.State.RUNNING || currentUpload?.state == WorkInfo.State.ENQUEUED
-    LaunchedEffect(currentUpload?.id, currentUpload?.state) {
-        when (currentUpload?.state) {
-            WorkInfo.State.SUCCEEDED -> {
-                val count = currentUpload.outputData.getInt(SftpUploadWorker.KEY_COUNT, 0)
-                val bytes = currentUpload.outputData.getLong(SftpUploadWorker.KEY_DONE_BYTES, 0L)
-                val total = currentUpload.outputData.getLong(SftpUploadWorker.KEY_TOTAL_BYTES, -1L)
-                val path = currentUpload.outputData.getString(SftpUploadWorker.KEY_REMOTE_PATH).orEmpty()
-                val failed = currentUpload.outputData.getInt(SftpUploadWorker.KEY_FAILED, 0)
-                val batchId = currentUpload.outputData.getString(SftpUploadWorker.KEY_BATCH_ID)
-                if (batchId != null) {
-                    viewModel.reportBackgroundUploadResult("Upload selesai · ${count - failed}/$count berhasil · ${SftpUploadWorker.formatBytes(bytes)}${if (total > 0) " / ${SftpUploadWorker.formatBytes(total)}" else ""} ke $path", failed > 0)
+    val activeProfileId = EncryptedStorage(context).getActiveProfileId()
+    val currentBatch = currentUploadBatch(batches, activeProfileId, uiState.currentPath)
+    val currentUpload = uploadWorkInfos.firstOrNull { it.id.toString() == currentBatch?.workId }
+    val uploadRunning = currentUpload?.state in setOf(WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED)
+    val observedWork = remember { mutableMapOf<String, WorkInfo.State>() }
+    val observingSince = remember { System.currentTimeMillis() }
+    LaunchedEffect(uploadWorkInfos) {
+        uploadWorkInfos.forEach { work ->
+            val id = work.id.toString()
+            val previous = observedWork.put(id, work.state)
+            if (work.state.isFinished && previous?.isFinished != true) {
+                val batch = transferStore.read().firstOrNull { it.workId == id }
+                if (batch?.profileId == activeProfileId && (previous != null || batch.createdAt >= observingSince) && batch.entries.any { it.destination == uiState.currentPath }) {
+                    viewModel.reportBackgroundUploadResult("${batch.succeeded}/${batch.entries.size} " + resources.getString(R.string.transfer_done), batch.failed > 0 || batch.cancelled > 0)
+                    viewModel.loadFiles(config = serverConfig)
                 }
-                if (path == uiState.currentPath) viewModel.loadFiles(config = serverConfig)
             }
-            WorkInfo.State.FAILED -> {
-                val count = currentUpload.outputData.getInt(SftpUploadWorker.KEY_FAILED, 0)
-                val path = currentUpload.outputData.getString(SftpUploadWorker.KEY_REMOTE_PATH).orEmpty()
-                val batchId = currentUpload.outputData.getString(SftpUploadWorker.KEY_BATCH_ID)
-                if (batchId != null) {
-                    viewModel.reportBackgroundUploadResult("Upload selesai dengan $count file gagal ke $path", true)
-                }
-                if (path == uiState.currentPath) viewModel.loadFiles(config = serverConfig)
-            }
-            else -> Unit
         }
     }
+    fun openTransferFolder(batch: UploadBatch, path: String) {
+        val config = onSelectTransferProfile(batch.profileId)
+        if (config == null) Toast.makeText(context, resources.getString(R.string.profile_missing), Toast.LENGTH_LONG).show()
+        else { viewModel.navigateTo(path, config); showTransfers = false }
+    }
+    LaunchedEffect(transferDestination, isTabActive) {
+        if (transferDestination != null && isTabActive) {
+            selectedTransfer = transferDestination.batchId
+            showTransfers = true
+            if (transferDestination.openFolder) transferStore.find(transferDestination.batchId)?.let { batch ->
+                batch.entries.firstOrNull()?.let { openTransferFolder(batch, it.destination) }
+            }
+            onTransferDestinationHandled()
+        }
+    }
+    if (showTransfers) TransferHistorySheet(transferStore, selectedTransfer, { selectedTransfer = it }, ::openTransferFolder, { showTransfers = false }, { reselectSource = it })
 
     // Dialog states for user input
     var showNewFolderDialog by remember { mutableStateOf(false) }
@@ -228,18 +254,39 @@ fun FilesScreen(
 
     // 1. Storage Access Framework (SAF) Multiple File Picker Contract initialized in root Composable
     var uploadDestinationPath by rememberSaveable { mutableStateOf(uiState.currentPath) }
+    var uploadProfileId by rememberSaveable { mutableStateOf(activeProfileId) }
+    var uploadHost by rememberSaveable { mutableStateOf(serverConfig.sshHost) }
+    var uploadPort by rememberSaveable { mutableStateOf(serverConfig.sshPort) }
+    var uploadUser by rememberSaveable { mutableStateOf(serverConfig.sshUser) }
+    var pendingUploads by rememberSaveable { mutableStateOf<List<Uri>>(emptyList()) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
-        if (uris.isNotEmpty()) {
-            viewModel.uploadMultipleFiles(
-                context = context.applicationContext,
-                uris = uris,
-                config = serverConfig,
-                destinationPath = uploadDestinationPath
-            )
+        pendingUploads = uris
+        if (uris.isNotEmpty() && android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
     }
+    if (pendingUploads.isNotEmpty()) AlertDialog(onDismissRequest = { pendingUploads = emptyList() },
+        title = { Text(tr("Unggah ${pendingUploads.size} file", "Upload ${pendingUploads.size} files")) },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("${EncryptedStorage(context).loadProfiles().firstOrNull { it.id == uploadProfileId }?.name.orEmpty()} · $uploadDestinationPath", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val fileNames = pendingUploads.map { uploadDisplayName(context, it) }
+            Text(fileNames.take(3).joinToString("\n") + if (fileNames.size > 3) "\n+${fileNames.size - 3}" else "", maxLines = 4, overflow = TextOverflow.Ellipsis)
+            val replacements = uiState.files.filter { !it.isDirectory && it.name in fileNames }
+            if (replacements.isNotEmpty()) Text(
+                tr("File yang sudah ada dan akan diganti:\n", "Existing files that will be replaced:\n") + replacements.joinToString("\n") { it.name },
+                color = MaterialTheme.colorScheme.error
+            )
+        } }, confirmButton = { TextButton(onClick = {
+            val config = EncryptedStorage(context).loadProfiles().firstOrNull { it.id == uploadProfileId }?.config
+            if (config == null || config.sshHost != uploadHost || config.sshPort != uploadPort || config.sshUser != uploadUser) {
+                Toast.makeText(context, resources.getString(R.string.upload_target_changed), Toast.LENGTH_LONG).show()
+            } else viewModel.uploadMultipleFiles(context.applicationContext, pendingUploads, config, uploadDestinationPath, uploadProfileId)
+            pendingUploads = emptyList()
+        }) { Text(tr("Unggah", "Upload")) } }, dismissButton = { TextButton(onClick = { pendingUploads = emptyList() }) { Text(tr("Batal", "Cancel")) } })
 
     val downloadFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         viewModel.completeDownload(context.applicationContext, uri)
@@ -256,20 +303,12 @@ fun FilesScreen(
         }
     }
 
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { }
-    val ensureUploadNotificationPermission = {
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-    }
-
     // Safe launch helper for file picker using SAF OpenMultipleDocuments
     val launchFilePicker = {
         try {
-            ensureUploadNotificationPermission()
             uploadDestinationPath = viewModel.currentRemotePath()
+            uploadProfileId = activeProfileId
+            uploadHost = serverConfig.sshHost; uploadPort = serverConfig.sshPort; uploadUser = serverConfig.sshUser
             filePickerLauncher.launch(arrayOf("*/*"))
         } catch (e: Exception) {
             Toast.makeText(
@@ -277,6 +316,20 @@ fun FilesScreen(
                 "Tidak dapat membuka pemilih berkas: ${e.localizedMessage ?: e.message}",
                 Toast.LENGTH_LONG
             ).show()
+        }
+    }
+    LaunchedEffect(reselectSource) {
+        reselectSource?.let { batch ->
+            val config = onSelectTransferProfile(batch.profileId)
+            if (config != null) {
+                uploadDestinationPath = batch.entries.first().destination
+                uploadProfileId = batch.profileId
+                uploadHost = config.sshHost; uploadPort = config.sshPort; uploadUser = config.sshUser
+                viewModel.navigateTo(uploadDestinationPath, config)
+                showTransfers = false
+                filePickerLauncher.launch(arrayOf("*/*"))
+            } else Toast.makeText(context, resources.getString(R.string.profile_missing), Toast.LENGTH_LONG).show()
+            reselectSource = null
         }
     }
 
@@ -300,7 +353,15 @@ fun FilesScreen(
         viewModel.loadFiles(config = serverConfig)
     }
 
-    val filteredList = uiState.files
+    val filteredList = remember(uiState.files, preferences.filesSort, preferences.showHiddenFiles) {
+        val order = when (preferences.filesSort) {
+            "modified" -> compareByDescending<RemoteFileItem> { it.modifiedTime }.thenBy { it.name.lowercase() }
+            "size" -> compareByDescending<RemoteFileItem> { it.sizeBytes }.thenBy { it.name.lowercase() }
+            else -> compareBy<RemoteFileItem> { it.name.lowercase() }
+        }
+        uiState.files.filter { preferences.showHiddenFiles || !it.name.startsWith('.') }
+            .sortedWith(compareBy<RemoteFileItem> { !it.isDirectory }.then(order))
+    }
 
     Box(
         modifier = modifier
@@ -313,39 +374,27 @@ fun FilesScreen(
             // Custom Screen Header
             CustomScreenHeader(
                 icon = Icons.Default.FolderOpen,
-                title = "Files",
-                subtitle = if (serverConfig.isSshConfigured) serverConfig.sshHost else "Jelajahi file · Sandbox",
+                title = tr("Berkas", "Files"),
+                subtitle = if (serverConfig.isSshConfigured) serverConfig.sshHost else tr("Jelajahi file server", "Browse server files"),
                 trailingContent = {
-                    if (serverConfig.isSshConfigured) Row {
+                    Row {
                         IconButton(
-                            onClick = launchFilePicker,
-                            modifier = Modifier.size(48.dp).testTag("upload_file_button")
+                            onClick = { selectedTransfer = null; showTransfers = true },
+                            modifier = Modifier.size(44.dp).testTag("transfer_history_button")
                         ) {
                             Icon(
-                                Icons.Default.FileUpload,
-                                contentDescription = "Upload File",
+                                Icons.Default.History,
+                                contentDescription = stringResource(R.string.transfer_history),
                                 tint = BurntOrange
                             )
                         }
-                        IconButton(
-                            onClick = { showNewFolderDialog = true },
-                            modifier = Modifier.size(48.dp).testTag("new_folder_button")
-                        ) {
-                            Icon(
-                                Icons.Default.CreateNewFolder,
-                                contentDescription = "New Folder",
-                                tint = BurntOrange
-                            )
-                        }
-                        IconButton(
-                            onClick = { showNewFileDialog = true },
-                            modifier = Modifier.size(48.dp).testTag("new_file_button")
-                        ) {
-                            Icon(
-                                Icons.Default.NoteAdd,
-                                contentDescription = "New File",
-                                tint = BurntOrange
-                            )
+                        Box {
+                            IconButton(onClick = { fileActions = true }, modifier = Modifier.size(44.dp)) { Icon(Icons.Default.MoreVert, stringResource(R.string.files_actions), tint = TextSecondary) }
+                            DropdownMenu(fileActions, { fileActions = false }) {
+                                DropdownMenuItem(enabled = serverConfig.isSshConfigured, text = { Text(stringResource(R.string.new_folder)) }, onClick = { fileActions = false; showNewFolderDialog = true }, modifier = Modifier.testTag("new_folder_button"))
+                                DropdownMenuItem(enabled = serverConfig.isSshConfigured, text = { Text(stringResource(R.string.new_file)) }, onClick = { fileActions = false; showNewFileDialog = true }, modifier = Modifier.testTag("new_file_button"))
+                                DropdownMenuItem(text = { Text(tr("Muat ulang", "Refresh")) }, onClick = { fileActions = false; viewModel.loadFiles(config = serverConfig) })
+                            }
                         }
                     }
                 }
@@ -357,15 +406,22 @@ fun FilesScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xffdbeafe))
-                        .border(1.dp, Color(0xff93c5fd), RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .border(1.dp, BurntOrangeBorder, RoundedCornerShape(12.dp))
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = { selectedPaths = emptySet() }) {
-                        Icon(Icons.Default.Close, "Batal memilih", tint = Color(0xff1d4ed8))
+                        Icon(Icons.Default.Close, "Batal memilih", tint = MaterialTheme.colorScheme.onPrimaryContainer)
                     }
-                    Text("${selectedItems.size} dipilih", color = Color(0xff1e3a8a), fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text(tr("${selectedItems.size} dipilih", "${selectedItems.size} selected"), color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(
+                        onClick = { selectedPaths = filteredList.mapTo(mutableSetOf()) { it.path } },
+                        enabled = selectedItems.size < filteredList.size,
+                        modifier = Modifier.testTag("files_select_all")
+                    ) {
+                        Icon(Icons.Default.CheckCircle, tr("Pilih semua", "Select all"), tint = if (selectedItems.size < filteredList.size) MaterialTheme.colorScheme.onPrimaryContainer else TextSecondary)
+                    }
                     IconButton(
                         onClick = {
                             chooseDownloadFolder(selectedItems)
@@ -373,70 +429,27 @@ fun FilesScreen(
                         enabled = selectedItems.isNotEmpty() && selectedItems.none { it.isDirectory } &&
                             !uiState.isDownloading && !uiState.isChoosingDownloadFolder
                     ) {
-                        Icon(Icons.Default.SaveAlt, "Download pilihan", tint = Color(0xff1d4ed8))
+                        Icon(Icons.Default.SaveAlt, tr("Download pilihan", "Download selected files"), tint = MaterialTheme.colorScheme.onPrimaryContainer)
                     }
                     IconButton(onClick = { itemsToDelete = selectedItems }, enabled = selectedItems.isNotEmpty() && !uiState.isDeleting) {
-                        Icon(Icons.Default.Delete, "Hapus pilihan", tint = TerminalRed)
+                        Icon(Icons.Default.Delete, tr("Hapus pilihan", "Delete selected items"), tint = TerminalRed)
                     }
                 }
                 if (selectedItems.any { it.isDirectory }) {
-                    Text("Download hanya untuk file. Batalkan pilihan folder untuk mengunduh.",
+                    Text(tr("Download hanya untuk file. Batalkan pilihan folder untuk mengunduh.", "Downloads support files. Deselect folders to continue."),
                         color = TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp))
                 }
             }
 
-            // Path Navigation & Action Bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(NavyDarkSurface)
-                    .border(1.dp, NavyDarkBorder, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = { viewModel.navigateUp(serverConfig) },
-                    enabled = uiState.currentPath != "/"
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Go Up",
-                        tint = if (uiState.currentPath != "/") BurntOrange else TextSecondary.copy(alpha = 0.4f),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                Text(
-                    text = uiState.currentPath,
-                    color = TextPrimary,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-                )
-
-                IconButton(onClick = { viewModel.loadFiles(config = serverConfig) }) {
-                    Icon(
-                        Icons.Default.Refresh,
-                        contentDescription = "Refresh",
-                        tint = BurntOrange,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-
-            // Search Bar
+            if (serverConfig.isSshConfigured) FolderBreadcrumbs(uiState.currentPath) { viewModel.navigateTo(it, serverConfig) }
+            if (serverConfig.isSshConfigured) {
             OutlinedTextField(
                 value = uiState.searchQuery,
                 onValueChange = { viewModel.updateSearchQuery(it) },
-                placeholder = { Text("Cari di folder ini dan subfolder...", color = TextSecondary, fontSize = 13.sp) },
+                placeholder = { Text(tr("Cari di folder ini dan subfolder...", "Search this folder and subfolders…"), color = TextSecondary, fontSize = 13.sp) },
                 trailingIcon = {
                     if (uiState.searchQuery.isNotEmpty()) IconButton(onClick = { viewModel.updateSearchQuery("") }) {
-                        Icon(Icons.Default.Close, "Hapus pencarian")
+                        Icon(Icons.Default.Close, tr("Hapus pencarian", "Clear search"))
                     }
                 },
                 leadingIcon = {
@@ -448,7 +461,7 @@ fun FilesScreen(
                     focusedContainerColor = NavyDarkCard,
                     unfocusedContainerColor = NavyDarkCard,
                     focusedBorderColor = BurntOrange,
-                    unfocusedBorderColor = NavyDarkBorder,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
                     focusedTextColor = TextPrimary,
                     unfocusedTextColor = TextPrimary
                 ),
@@ -458,6 +471,20 @@ fun FilesScreen(
                     .heightIn(min = 56.dp)
             )
 
+            if (serverConfig.isSshConfigured) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(tr("${filteredList.size} item", "${filteredList.size} items"), color = TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                Box {
+                    TextButton(onClick = { sortMenu = true }, modifier = Modifier.testTag("files_sort")) { Text(stringResource(R.string.files_sort), color = BurntOrange) }
+                    DropdownMenu(sortMenu, { sortMenu = false }) {
+                        listOf("name" to R.string.sort_name, "modified" to R.string.sort_modified, "size" to R.string.sort_size).forEach { (sort, label) ->
+                            DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = { appearanceStore.update(preferences.copy(filesSort = sort)); sortMenu = false }, trailingIcon = { if (preferences.filesSort == sort) Icon(Icons.Default.CheckCircle, null) })
+                        }
+                        DropdownMenuItem(text = { Text(stringResource(R.string.hidden_files)) }, onClick = { appearanceStore.update(preferences.copy(showHiddenFiles = !preferences.showHiddenFiles)); sortMenu = false }, trailingIcon = { Checkbox(preferences.showHiddenFiles, null) })
+                    }
+                }
+            }
+
+            }
             if (uiState.searchQuery.isNotBlank()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -465,21 +492,21 @@ fun FilesScreen(
                             "${uiState.files.size} hasil di ${uiState.currentPath} dan subfolder",
                         color = TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f)
                     )
-                    if (uiState.isSearching) TextButton(onClick = viewModel::stopSearch) { Text("Berhenti") }
+                    if (uiState.isSearching) TextButton(onClick = viewModel::stopSearch) { Text(tr("Berhenti", "Stop")) }
                 }
                 uiState.searchNotice?.let {
                     Text(it, color = TerminalRed, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp))
                 }
             }
             if (uiState.isDeleting) {
-                Text("Menghapus item terpilih…", color = TextSecondary, modifier = Modifier.padding(horizontal = 20.dp))
+                Text(tr("Menghapus item terpilih…", "Deleting selected items…"), color = TextSecondary, modifier = Modifier.padding(horizontal = 20.dp))
             }
 
             // Transfer state: persistent progress while active, concise completion result afterwards.
             if (uploadRunning || uiState.isDownloading || uiState.transferStatus != null) {
                 TailHarnessCard(
-                    backgroundColor = Color.White,
-                    borderColor = Color(0xffe2e8f0),
+                    backgroundColor = NavyDarkCard,
+                    borderColor = NavyDarkBorder,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
@@ -487,48 +514,47 @@ fun FilesScreen(
                     Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (uploadRunning || uiState.isDownloading) {
-                                CircularProgressIndicator(color = Color(0xff3b82f6), strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                                CircularProgressIndicator(color = BurntOrange, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                             } else if (uiState.transferFailed) {
-                                Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = Color(0xffbe123c), modifier = Modifier.size(20.dp))
+                                Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = TerminalRed, modifier = Modifier.size(20.dp))
                             } else {
-                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xff0f5f51), modifier = Modifier.size(20.dp))
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = TerminalGreen, modifier = Modifier.size(20.dp))
                             }
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    uiState.transferStatus ?: if (uploadRunning) {
-                                        val fileName = currentUpload?.progress?.getString(SftpUploadWorker.KEY_NAME).orEmpty()
+                                    if (uploadRunning) {
+                                        val fileName = currentUpload?.progress?.getString(SftpUploadWorker.KEY_NAME) ?: currentBatch?.entries?.firstOrNull()?.name.orEmpty()
                                         val index = currentUpload?.progress?.getInt(SftpUploadWorker.KEY_INDEX, 0) ?: 0
                                         val count = currentUpload?.progress?.getInt(SftpUploadWorker.KEY_COUNT, 0) ?: 0
-                                        val bytes = currentUpload?.progress?.getLong(SftpUploadWorker.KEY_FILE_BYTES, 0L) ?: 0L
-                                        val total = currentUpload?.progress?.getLong(SftpUploadWorker.KEY_FILE_SIZE, -1L) ?: -1L
-                                        val targetPath = currentUpload?.progress?.getString(SftpUploadWorker.KEY_REMOTE_PATH).orEmpty()
-                                        "Mengunggah ke $targetPath · $index/$count · $fileName · ${SftpUploadWorker.formatBytes(bytes)}${if (total > 0) " / ${SftpUploadWorker.formatBytes(total)}" else ""}"
-                                    } else "Mengunduh file",
-                                    color = Color(0xff1e293b), fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+                                        if (currentBatch?.entries?.none { it.state == UploadState.UPLOADING } != false) tr("Menunggu · $fileName", "Waiting · $fileName")
+                                        else "$index/$count · $fileName"
+                                    } else uiState.transferStatus ?: tr("Mengunduh file", "Downloading files"),
+                                    color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
                                     maxLines = 2, overflow = TextOverflow.Ellipsis
                                 )
                                 (if (uploadRunning) "${currentUpload?.progress?.getInt(SftpUploadWorker.KEY_PERCENT, 0) ?: 0}%" else uiState.downloadingFileName)?.let {
-                                    Text(it, color = Color(0xff64748b), fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                                    Text(it, color = TextSecondary, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
                                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
-                            if (uiState.transferStatus != null) {
-                                IconButton(onClick = viewModel::clearTransferStatus, modifier = Modifier.size(40.dp)) {
-                                    Icon(Icons.Default.Close, "Tutup status transfer", tint = Color(0xff64748b))
+                            if (uploadRunning) TextButton(onClick = { selectedTransfer = batches.firstOrNull { it.workId == currentUpload?.id.toString() }?.id; showTransfers = true }) { Text(stringResource(R.string.view_results)) }
+                            if (!uploadRunning && uiState.transferStatus != null) {
+                                IconButton(onClick = viewModel::clearTransferStatus, modifier = Modifier.size(44.dp)) {
+                                    Icon(Icons.Default.Close, "Tutup status transfer", tint = TextSecondary)
                                 }
                             }
                         }
                         if (uploadRunning || uiState.isDownloading) {
                             Spacer(Modifier.height(10.dp))
                             val progress = currentUpload?.progress?.getInt(SftpUploadWorker.KEY_PERCENT, 0) ?: 0
-                            if (uploadRunning) LinearProgressIndicator(
+                            if (uploadRunning && (currentUpload?.progress?.getLong(SftpUploadWorker.KEY_TOTAL_BYTES, -1L) ?: -1L) > 0) LinearProgressIndicator(
                                 progress = { progress / 100f },
                                 modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(4.dp)),
-                                color = Color(0xff3b82f6), trackColor = Color(0xffe2e8f0)
+                                color = BurntOrange, trackColor = NavyDarkBorder
                             ) else LinearProgressIndicator(
                                 modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(4.dp)),
-                                color = Color(0xff3b82f6), trackColor = Color(0xffe2e8f0)
+                                color = BurntOrange, trackColor = NavyDarkBorder
                             )
                         }
                     }
@@ -550,26 +576,26 @@ fun FilesScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
-                            Box(Modifier.size(72.dp).clip(RoundedCornerShape(24.dp)).background(Color(0xffeaf2fe)), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.FolderOpen, null, tint = Color(0xff3b82f6), modifier = Modifier.size(34.dp))
+                            Box(Modifier.size(72.dp).clip(RoundedCornerShape(24.dp)).background(BurntOrangeBadgeBg), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.FolderOpen, null, tint = BurntOrange, modifier = Modifier.size(34.dp))
                             }
                             Spacer(Modifier.height(18.dp))
-                            Text("Hubungkan ke server", color = Color(0xff1e293b), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                             Text(tr("Hubungkan ke server", "Connect to a server"), color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(6.dp))
-                            Text("Simpan konfigurasi SSH di Settings untuk menjelajahi dan mengelola file.",
-                                color = Color(0xff64748b), fontSize = 14.sp, lineHeight = 20.sp)
+                            Text(tr("Simpan konfigurasi SSH di Settings untuk menjelajahi dan mengelola file.", "Save an SSH connection in Settings to browse and manage server files."),
+                                color = TextSecondary, fontSize = 14.sp, lineHeight = 20.sp)
                             Spacer(Modifier.height(18.dp))
-                            Button(onClick = { onOpenSettings?.invoke() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xff3b82f6))) {
-                                Text("Buka Settings", color = Color.White)
+                            Button(onClick = { onOpenSettings?.invoke() }, colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)) {
+                                Text(tr("Buka Settings", "Open Settings"), color = MaterialTheme.colorScheme.onPrimary)
                             }
                         }
                     }
                     uiState.isLoading -> {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                CircularProgressIndicator(color = Color(0xff3b82f6))
+                                CircularProgressIndicator(color = BurntOrange)
                                 Spacer(Modifier.height(12.dp))
-                                Text("Memuat file server…", color = Color(0xff64748b), fontSize = 13.sp)
+                                Text(tr("Memuat file server…", "Loading server files…"), color = TextSecondary, fontSize = 13.sp)
                             }
                         }
                     }
@@ -583,7 +609,7 @@ fun FilesScreen(
                         ) {
                             Text(
                                 text = uiState.errorMessage ?: "Error",
-                                color = Color(0xffbe123c),
+                                color = TerminalRed,
                                 fontSize = 14.sp,
                                 fontFamily = FontFamily.Monospace
                             )
@@ -591,24 +617,24 @@ fun FilesScreen(
                             Text(
                                 if (uiState.searchQuery.isNotBlank()) "Pencarian belum selesai. Coba lagi atau hapus pencarian untuk kembali ke folder." else
                                     "Tidak dapat memuat folder. Periksa koneksi lalu coba lagi.",
-                                color = Color(0xff64748b), fontSize = 13.sp, lineHeight = 18.sp
+                                color = TextSecondary, fontSize = 13.sp, lineHeight = 18.sp
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
                                 onClick = { viewModel.loadFiles(config = serverConfig) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xff3b82f6))
+                                colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                             ) {
-                                Text("Coba Lagi", color = Color.White)
+                                Text(tr("Coba Lagi", "Try again"), color = MaterialTheme.colorScheme.onPrimary)
                             }
                         }
                     }
                     filteredList.isEmpty() && uiState.isSearching -> {
                         Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center) {
-                            CircularProgressIndicator(color = Color(0xff3b82f6))
+                            CircularProgressIndicator(color = BurntOrange)
                             Spacer(Modifier.height(12.dp))
-                            Text("Mencari file dan folder…", color = TextPrimary)
-                            Text("Hasil akan muncul saat ditemukan.", color = TextSecondary, fontSize = 13.sp)
+                            Text(tr("Mencari file dan folder…", "Searching files and folders…"), color = TextPrimary)
+                            Text(tr("Hasil akan muncul saat ditemukan.", "Results appear as they are found."), color = TextSecondary, fontSize = 13.sp)
                         }
                     }
                     filteredList.isEmpty() -> {
@@ -622,85 +648,26 @@ fun FilesScreen(
                             Icon(
                                 Icons.Default.FolderOpen,
                                 contentDescription = null,
-                                tint = Color(0xff64748b).copy(alpha = 0.45f),
+                                tint = TextSecondary.copy(alpha = 0.6f),
                                 modifier = Modifier.size(48.dp)
                             )
                             Spacer(modifier = Modifier.height(12.dp))
-                            Text(if (uiState.searchQuery.isNotBlank()) "Tidak ada hasil pencarian" else "Folder ini masih kosong", color = Color(0xff1e293b), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            Text(if (uiState.searchQuery.isNotBlank()) tr("Tidak ada hasil pencarian", "No matching files") else tr("Folder ini masih kosong", "This folder is empty"), color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.height(4.dp))
-                            Text(if (uiState.searchQuery.isNotBlank()) "Coba kata lain atau cari dari folder induk." else "Unggah file atau buat folder untuk mulai mengisi.", color = Color(0xff64748b), fontSize = 13.sp)
+                            Text(if (uiState.searchQuery.isNotBlank()) tr("Coba kata lain atau cari dari folder induk.", "Try another name or search from a parent folder.") else tr("Unggah file atau buat folder untuk mulai mengisi.", "Upload a file or create a folder to begin."), color = TextSecondary, fontSize = 13.sp)
                         }
                     }
                     else -> {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 96.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            val folders = filteredList.filter { it.isDirectory }
-                            val files = filteredList.filterNot { it.isDirectory }
-                            if (folders.isNotEmpty()) {
-                                item {
-                                    Text("Folders", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
-                                }
-                                items(folders.chunked(2), key = { "folders_${it.first().path}" }) { pair ->
-                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        pair.forEach { folder ->
-                                            Box(Modifier.weight(1f)) {
-                                                 FileItemCard(
-                                                     item = folder,
-                                                     onOpen = { openOrSelect(folder) { viewModel.navigateTo(folder.path, serverConfig) } },
-                                                     onLongClick = { toggleSelection(folder) },
-                                                     onRename = { itemToRename = folder; renameNewName = folder.name },
-                                                     onDelete = { itemToDelete = folder },
-                                                     onDownload = {},
-                                                     onInfo = { itemToInspect = folder },
-                                                     isSelected = folder.path in selectedPaths,
-                                                     selectionMode = selectedPaths.isNotEmpty(),
-                                                     showPath = uiState.searchQuery.isNotBlank()
-                                                )
-                                            }
-                                        }
-                                        if (pair.size == 1) Spacer(Modifier.weight(1f))
-                                    }
-                                }
-                            }
-                            if (files.isNotEmpty()) {
-                                item {
-                                    Text("Files", style = MaterialTheme.typography.titleMedium, color = TextPrimary,
-                                        modifier = Modifier.padding(top = 8.dp))
-                                }
-                            }
-                            items(files, key = { it.path }) { item ->
-                                FileItemCard(
-                                    item = item,
-                                    onOpen = {
-                                        openOrSelect(item) {
-                                            if (item.isDirectory) {
-                                                viewModel.navigateTo(item.path, serverConfig)
-                                            } else {
-                                                viewModel.readFile(item, serverConfig, context.cacheDir)
-                                            }
-                                        }
-                                    },
-                                    onLongClick = { toggleSelection(item) },
-                                    onRename = {
-                                        itemToRename = item
-                                        renameNewName = item.name
-                                    },
-                                    onDelete = {
-                                        itemToDelete = item
-                                    },
-                                    onDownload = {
-                                        chooseDownloadFolder(listOf(item))
-                                    },
-                                    onInfo = { itemToInspect = item },
-                                    isSelected = item.path in selectedPaths,
-                                    selectionMode = selectedPaths.isNotEmpty(),
-                                    showPath = uiState.searchQuery.isNotBlank()
-                                )
-                            }
-                        }
+                        FileItemsList(filteredList, selectedPaths, uiState.searchQuery.isNotBlank(), bottomOverlayInset,
+                            onOpen = { item -> openOrSelect(item) {
+                                if (item.isDirectory) viewModel.navigateTo(item.path, serverConfig)
+                                else viewModel.readFile(item, serverConfig, context.cacheDir)
+                            } },
+                            onLongClick = ::toggleSelection,
+                            onRename = { itemToRename = it; renameNewName = it.name },
+                            onDelete = { itemToDelete = it },
+                            onDownload = { chooseDownloadFolder(listOf(it)) },
+                            onInfo = { itemToInspect = it })
                     }
                 }
             }
@@ -711,10 +678,10 @@ fun FilesScreen(
             onClick = launchFilePicker,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(20.dp)
+                .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 20.dp + bottomOverlayInset)
                 .testTag("upload_file_fab"),
-            containerColor = Color(0xff3b82f6),
-            contentColor = Color.White,
+            containerColor = BurntOrange,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
             shape = RoundedCornerShape(16.dp)
         ) {
             Row(
@@ -723,7 +690,7 @@ fun FilesScreen(
             ) {
                 Icon(
                     Icons.Default.FileUpload,
-                    contentDescription = "Upload File",
+                    contentDescription = tr("Unggah file", "Upload files"),
                     modifier = Modifier.size(20.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
@@ -744,45 +711,45 @@ fun FilesScreen(
             text = {
                 SelectionContainer {
                     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        FileInfoDetail("Nama lengkap", item.name)
-                        FileInfoDetail("Lokasi", item.path)
-                        FileInfoDetail("Jenis", when {
+                        FileInfoDetail(tr("Nama lengkap", "Full name"), item.name)
+                        FileInfoDetail(tr("Lokasi", "Location"), item.path)
+                        FileInfoDetail(tr("Jenis", "Type"), when {
                             item.isDirectory -> "Folder"
                             item.permissions.startsWith("l") -> "Symbolic link"
-                            item.extension.isBlank() -> "File tanpa ekstensi"
-                            else -> "File ${item.extension.uppercase(java.util.Locale.ROOT)} (berdasarkan ekstensi)"
+                            item.extension.isBlank() -> tr("File tanpa ekstensi", "File without extension")
+                            else -> tr("File ${item.extension.uppercase(java.util.Locale.ROOT)} (berdasarkan ekstensi)", "${item.extension.uppercase(java.util.Locale.ROOT)} file (by extension)")
                         })
-                        FileInfoDetail("Ukuran", if (item.isDirectory) "Ukuran total isi folder belum dihitung" else
+                        FileInfoDetail(tr("Ukuran", "Size"), if (item.isDirectory) tr("Ukuran total isi folder belum dihitung", "Folder contents have not been measured") else
                             "${item.formattedSize} · ${java.text.NumberFormat.getIntegerInstance().format(item.sizeBytes)} byte")
-                        FileInfoDetail("Terakhir diubah", item.formattedDate.takeUnless { it == "-" } ?: "Tidak tersedia")
+                        FileInfoDetail(tr("Terakhir diubah", "Last modified"), item.formattedDate.takeUnless { it == "-" } ?: tr("Tidak tersedia", "Unavailable"))
                         FileInfoDetail("Permission", item.permissions)
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { itemToInspect = null }) { Text("Tutup") } }
+            confirmButton = { TextButton(onClick = { itemToInspect = null }) { Text(tr("Tutup", "Close")) } }
         )
     }
 
     if (showNewFolderDialog) {
         AlertDialog(
             onDismissRequest = { showNewFolderDialog = false },
-            containerColor = Color.White,
-            titleContentColor = Color(0xff1e293b),
+            containerColor = NavyDarkCard,
+            titleContentColor = TextPrimary,
             shape = RoundedCornerShape(28.dp),
-            title = { Text("Buat Folder Baru", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("Buat folder baru", "Create folder"), fontWeight = FontWeight.Bold) },
             text = {
                 OutlinedTextField(
                     value = newFolderName,
                     onValueChange = { newFolderName = it },
-                    label = { Text("Nama folder") },
-                    placeholder = { Text("contoh: scripts") },
+                    label = { Text(tr("Nama folder", "Folder name")) },
+                    placeholder = { Text(tr("contoh: scripts", "for example: scripts")) },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xff3b82f6),
-                        unfocusedBorderColor = Color(0xffe2e8f0),
-                        focusedTextColor = Color(0xff1e293b),
-                        unfocusedTextColor = Color(0xff1e293b),
-                        focusedLabelColor = Color(0xff3b82f6)
+                        focusedBorderColor = BurntOrange,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedLabelColor = BurntOrange
                     )
                 )
             },
@@ -795,14 +762,14 @@ fun FilesScreen(
                             newFolderName = ""
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xff3b82f6))
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                 ) {
-                    Text("Buat", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text(tr("Buat", "Create"), color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                     TextButton(onClick = { showNewFolderDialog = false }) {
-                    Text("Batal", color = Color(0xff64748b))
+                    Text(tr("Batal", "Cancel"), color = TextSecondary)
                 }
             }
         )
@@ -812,39 +779,39 @@ fun FilesScreen(
     if (showNewFileDialog) {
         AlertDialog(
             onDismissRequest = { showNewFileDialog = false },
-            containerColor = Color.White,
-            titleContentColor = Color(0xff1e293b),
+            containerColor = NavyDarkCard,
+            titleContentColor = TextPrimary,
             shape = RoundedCornerShape(28.dp),
-            title = { Text("Buat File Baru", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("Buat file baru", "Create file"), fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = newFileName,
                         onValueChange = { newFileName = it },
-                        label = { Text("Nama file") },
-                        placeholder = { Text("contoh: config.json") },
+                        label = { Text(tr("Nama file", "File name")) },
+                        placeholder = { Text(tr("contoh: config.json", "for example: config.json")) },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xff3b82f6),
-                            unfocusedBorderColor = Color(0xffe2e8f0),
-                            focusedTextColor = Color(0xff1e293b),
-                            unfocusedTextColor = Color(0xff1e293b),
-                            focusedLabelColor = Color(0xff3b82f6)
+                            focusedBorderColor = BurntOrange,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary,
+                            focusedLabelColor = BurntOrange
                         )
                     )
                     OutlinedTextField(
                         value = newFileContent,
                         onValueChange = { newFileContent = it },
-                        label = { Text("Isi file") },
-                        placeholder = { Text("Tulis isi file teks…") },
+                        label = { Text(tr("Isi file", "File content")) },
+                        placeholder = { Text(tr("Tulis isi file teks…", "Enter text file content…")) },
                         maxLines = 6,
                         modifier = Modifier.height(120.dp),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xff3b82f6),
-                            unfocusedBorderColor = Color(0xffe2e8f0),
-                            focusedTextColor = Color(0xff1e293b),
-                            unfocusedTextColor = Color(0xff1e293b),
-                            focusedLabelColor = Color(0xff3b82f6)
+                            focusedBorderColor = BurntOrange,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary,
+                            focusedLabelColor = BurntOrange
                         )
                     )
                 }
@@ -859,14 +826,14 @@ fun FilesScreen(
                             newFileContent = ""
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xff3b82f6))
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                 ) {
-                    Text("Simpan", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text(tr("Simpan", "Save"), color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                     TextButton(onClick = { showNewFileDialog = false }) {
-                    Text("Batal", color = Color(0xff64748b))
+                    Text(tr("Batal", "Cancel"), color = TextSecondary)
                 }
             }
         )
@@ -877,22 +844,22 @@ fun FilesScreen(
     if (renameItem != null) {
         AlertDialog(
             onDismissRequest = { itemToRename = null },
-            containerColor = Color.White,
-            titleContentColor = Color(0xff1e293b),
+            containerColor = NavyDarkCard,
+            titleContentColor = TextPrimary,
             shape = RoundedCornerShape(28.dp),
-            title = { Text("Ganti Nama", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("Ganti nama", "Rename"), fontWeight = FontWeight.Bold) },
             text = {
                 OutlinedTextField(
                     value = renameNewName,
                     onValueChange = { renameNewName = it },
-                    label = { Text("Nama baru") },
+                    label = { Text(tr("Nama baru", "New name")) },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xff3b82f6),
-                        unfocusedBorderColor = Color(0xffe2e8f0),
-                        focusedTextColor = Color(0xff1e293b),
-                        unfocusedTextColor = Color(0xff1e293b),
-                        focusedLabelColor = Color(0xff3b82f6)
+                        focusedBorderColor = BurntOrange,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedLabelColor = BurntOrange
                     )
                 )
             },
@@ -904,14 +871,14 @@ fun FilesScreen(
                             itemToRename = null
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xff3b82f6))
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                 ) {
-                    Text("Simpan", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text(tr("Simpan", "Save"), color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                     TextButton(onClick = { itemToRename = null }) {
-                    Text("Batal", color = Color(0xff64748b))
+                    Text(tr("Batal", "Cancel"), color = TextSecondary)
                 }
             }
         )
@@ -922,13 +889,13 @@ fun FilesScreen(
     if (deleteItem != null) {
         AlertDialog(
             onDismissRequest = { itemToDelete = null },
-            containerColor = Color.White,
-            titleContentColor = Color(0xff1e293b),
+            containerColor = NavyDarkCard,
+            titleContentColor = TextPrimary,
             shape = RoundedCornerShape(28.dp),
-            title = { Text("Hapus ${if (deleteItem.isDirectory) "folder" else "file"}?", fontWeight = FontWeight.Bold) },
+            title = { Text(if (deleteItem.isDirectory) tr("Hapus folder?", "Delete folder?") else tr("Hapus file?", "Delete file?"), fontWeight = FontWeight.Bold) },
             text = {
-                Text("${deleteItem.path}\n\nTindakan ini tidak dapat dibatalkan." +
-                    if (deleteItem.isDirectory) " Folder harus kosong agar bisa dihapus." else "", color = Color(0xff64748b))
+                Text(deleteItem.path + tr("\n\nTindakan ini tidak dapat dibatalkan.", "\n\nThis cannot be undone.") +
+                    if (deleteItem.isDirectory) tr(" Folder harus kosong agar bisa dihapus.", " The folder must be empty before deletion.") else "", color = TextSecondary)
             },
             confirmButton = {
                 Button(
@@ -936,14 +903,14 @@ fun FilesScreen(
                         viewModel.deleteItem(deleteItem, serverConfig)
                         itemToDelete = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xffbe123c))
+                    colors = ButtonDefaults.buttonColors(containerColor = TerminalRed, contentColor = MaterialTheme.colorScheme.onError)
                 ) {
-                    Text("Hapus", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text(tr("Hapus", "Delete"), color = MaterialTheme.colorScheme.onError, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                     TextButton(onClick = { itemToDelete = null }) {
-                    Text("Batal", color = Color(0xff64748b))
+                    Text(tr("Batal", "Cancel"), color = TextSecondary)
                 }
             }
         )
@@ -953,16 +920,16 @@ fun FilesScreen(
     if (selectedDeleteItems != null) {
         AlertDialog(
             onDismissRequest = { itemsToDelete = null },
-            containerColor = Color.White,
-            titleContentColor = Color(0xff1e293b),
+            containerColor = NavyDarkCard,
+            titleContentColor = TextPrimary,
             shape = RoundedCornerShape(28.dp),
-            title = { Text("Hapus ${selectedDeleteItems.size} item?", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("Hapus ${selectedDeleteItems.size} item?", "Delete ${selectedDeleteItems.size} items?"), fontWeight = FontWeight.Bold) },
             text = {
                 Text(
                     selectedDeleteItems.take(5).joinToString("\n") { it.path } +
                         (if (selectedDeleteItems.size > 5) "\n…" else "") +
-                        "\n\nTindakan ini tidak dapat dibatalkan. Folder harus kosong agar bisa dihapus.",
-                    color = Color(0xff64748b)
+                        tr("\n\nTindakan ini tidak dapat dibatalkan. Folder harus kosong agar bisa dihapus.", "\n\nThis cannot be undone. Folders must be empty before deletion."),
+                    color = TextSecondary
                 )
             },
             confirmButton = {
@@ -972,11 +939,11 @@ fun FilesScreen(
                         itemsToDelete = null
                         selectedPaths = emptySet()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xffbe123c))
-                ) { Text("Hapus", color = Color.White, fontWeight = FontWeight.Bold) }
+                    colors = ButtonDefaults.buttonColors(containerColor = TerminalRed, contentColor = MaterialTheme.colorScheme.onError)
+                ) { Text("Hapus", color = MaterialTheme.colorScheme.onError, fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
-                TextButton(onClick = { itemsToDelete = null }) { Text("Batal", color = Color(0xff64748b)) }
+                TextButton(onClick = { itemsToDelete = null }) { Text("Batal", color = TextSecondary) }
             }
         )
     }
@@ -987,7 +954,7 @@ fun FilesScreen(
             Column(Modifier.fillMaxSize().background(Color(0xff141729)).padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(preview.name, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { viewModel.closeImagePreview() }) { Text("Tutup", color = Color.White) }
+                    TextButton(onClick = { viewModel.closeImagePreview() }) { Text(tr("Tutup", "Close"), color = Color.White) }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     when {
@@ -998,7 +965,7 @@ fun FilesScreen(
                         else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             CircularProgressIndicator(color = Color(0xff62ae91))
                             Spacer(Modifier.height(12.dp))
-                            Text("Mengunduh gambar…", color = Color.White)
+                            Text(tr("Mengunduh gambar…", "Downloading image…"), color = Color.White)
                         }
                     }
                 }
@@ -1056,18 +1023,64 @@ fun FilesScreen(
                         ) {
                             Icon(Icons.Default.SmartToy, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Tanya Hermes", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text(tr("Tanya Hermes", "Ask Hermes"), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                     }
                     Button(
                         onClick = { viewModel.setViewingFile(null) },
                         colors = ButtonDefaults.buttonColors(containerColor = BurntOrange)
                     ) {
-                        Text("Tutup", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(tr("Tutup", "Close"), color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
             }
         )
+    }
+}
+
+private fun uploadDisplayName(context: Context, uri: Uri): String = runCatching {
+    context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) cursor.getString(0)?.takeIf(String::isNotBlank) else null
+    }
+}.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: trFileFallback(context)
+
+private fun trFileFallback(context: Context): String = context.getString(com.example.R.string.new_file)
+
+@Composable
+internal fun FileItemsList(
+    items: List<RemoteFileItem>, selectedPaths: Set<String>, showPath: Boolean,
+    bottomOverlayInset: androidx.compose.ui.unit.Dp,
+    onOpen: (RemoteFileItem) -> Unit, onLongClick: (RemoteFileItem) -> Unit,
+    onRename: (RemoteFileItem) -> Unit, onDelete: (RemoteFileItem) -> Unit,
+    onDownload: (RemoteFileItem) -> Unit, onInfo: (RemoteFileItem) -> Unit
+) {
+    val (folders, files) = remember(items) { items.partition { it.isDirectory } }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().testTag("files_list"),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp + bottomOverlayInset),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (folders.isNotEmpty()) {
+            item(key = "folders_header", contentType = "header") {
+                Text(tr("Folder", "Folders"), style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+            }
+        }
+        items(folders, key = { it.path }, contentType = { "file_row" }) { item ->
+            FileItemCard(item, { onOpen(item) }, { onLongClick(item) }, { onRename(item) },
+                { onDelete(item) }, { onDownload(item) }, { onInfo(item) },
+                item.path in selectedPaths, selectedPaths.isNotEmpty(), showPath)
+        }
+        if (files.isNotEmpty()) {
+            item(key = "files_header", contentType = "header") {
+                Text(tr("File", "Files"), style = MaterialTheme.typography.titleMedium, color = TextPrimary,
+                    modifier = Modifier.padding(top = 8.dp))
+            }
+        }
+        items(files, key = { it.path }, contentType = { "file_row" }) { item ->
+            FileItemCard(item, { onOpen(item) }, { onLongClick(item) }, { onRename(item) },
+                { onDelete(item) }, { onDownload(item) }, { onInfo(item) },
+                item.path in selectedPaths, selectedPaths.isNotEmpty(), showPath)
+        }
     }
 }
 
@@ -1094,6 +1107,10 @@ fun FileItemCard(
     showPath: Boolean = false
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+    val timeZone = java.util.TimeZone.getDefault().id
+    val formattedDate = remember(item.modifiedTime, locale, timeZone) { item.formattedDate }
+    val formattedSize = remember(item.sizeBytes, item.isDirectory) { item.formattedSize }
 
     val icon: ImageVector = when {
         item.isDirectory -> Icons.Default.Folder
@@ -1104,62 +1121,13 @@ fun FileItemCard(
 
     val iconTint = if (item.isDirectory) BurntOrange else TerminalCyan
 
-    if (item.isDirectory) {
-        val palette = listOf(
-            FolderBlue to Color(0xFF2879C9), FolderPeach to Color(0xFFAD711B),
-            FolderRose to Color(0xFFBE4568), FolderMint to Color(0xFF278D80)
-        )
-        val (tint, accent) = palette[Math.floorMod(item.name.hashCode(), palette.size)]
-        Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = tint,
-            modifier = Modifier
-                .fillMaxWidth()
-                .combinedClickable(onClick = onOpen, onLongClick = onLongClick)
-                .then(if (isSelected) Modifier.border(3.dp, Color(0xff2563eb), RoundedCornerShape(22.dp)) else Modifier)
-                .testTag("file_item_${item.name}")
-        ) {
-            Column(Modifier.padding(16.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween) {
-                    Icon(Icons.Default.Folder, null, tint = accent, modifier = Modifier.size(32.dp))
-                    if (selectionMode) {
-                        Checkbox(checked = isSelected, onCheckedChange = { onOpen() })
-                    } else Box {
-                        IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Default.MoreVert, "Tindakan folder", tint = accent)
-                        }
-                         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                             DropdownMenuItem(text = { Text("Informasi folder") },
-                                 leadingIcon = { Icon(Icons.Default.Info, null) },
-                                 onClick = { menuExpanded = false; onInfo() })
-                            DropdownMenuItem(text = { Text("Ganti nama") }, onClick = { menuExpanded = false; onRename() })
-                            DropdownMenuItem(text = { Text("Hapus", color = TerminalRed) }, onClick = { menuExpanded = false; onDelete() })
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Text(item.name, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                 Text(
-                     if (showPath) item.path else "Folder",
-                     color = accent,
-                     fontSize = 12.sp,
-                     maxLines = 1,
-                     overflow = TextOverflow.Ellipsis,
-                     modifier = Modifier.padding(top = 4.dp)
-                 )
-            }
-        }
-        return
-    }
-
     TailHarnessCard(
         modifier = Modifier.testTag("file_item_${item.name}"),
         onClick = onOpen,
         onLongClick = onLongClick,
         backgroundColor = NavyDarkCard,
-        borderColor = if (isSelected) Color(0xff2563eb) else NavyCardBorder
+        borderColor = if (isSelected) BurntOrange else NavyCardBorder,
+        shadowElevation = 0.dp
     ) {
         Row(
             modifier = Modifier
@@ -1197,30 +1165,30 @@ fun FileItemCard(
                         color = TextPrimary,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 14.sp,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    Text(
+                    if (!item.isDirectory) Text(
                         item.extension.ifBlank { "FILE" }.uppercase(java.util.Locale.ROOT),
-                        color = Color(0xff1d4ed8), fontWeight = FontWeight.Bold, fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold, fontSize = 10.sp,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.widthIn(max = 72.dp).clip(RoundedCornerShape(5.dp))
-                            .background(Color(0xffdbeafe)).padding(horizontal = 5.dp, vertical = 3.dp)
+                            .background(MaterialTheme.colorScheme.primaryContainer).padding(horizontal = 5.dp, vertical = 3.dp)
                     )
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = item.formattedSize,
+                        text = if (item.isDirectory) tr("Folder", "Folder") else formattedSize,
                         color = TextSecondary,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    if (item.formattedDate != "-") {
+                    if (formattedDate != "-") {
                         Text(" · ", color = TextSecondary, fontSize = 12.sp)
                         Text(
-                            text = item.formattedDate,
+                            text = formattedDate,
                             color = TextSecondary,
                             fontSize = 12.sp,
                             maxLines = 1,
@@ -1247,7 +1215,7 @@ fun FileItemCard(
                 IconButton(onClick = { menuExpanded = true }) {
                     Icon(
                         Icons.Default.MoreVert,
-                        contentDescription = "Actions",
+                        contentDescription = tr("Tindakan untuk ${item.name}", "Actions for ${item.name}"),
                         tint = TextSecondary,
                         modifier = Modifier.size(20.dp)
                     )
@@ -1259,7 +1227,7 @@ fun FileItemCard(
                     modifier = Modifier.background(NavyDarkCard)
                 ) {
                     DropdownMenuItem(
-                        text = { Text(if (item.isDirectory) "Buka Folder" else "Lihat Isi File", color = TextPrimary) },
+                        text = { Text(if (item.isDirectory) tr("Buka folder", "Open folder") else tr("Lihat isi file", "Preview file"), color = TextPrimary) },
                         leadingIcon = {
                             Icon(if (item.isDirectory) Icons.Default.FolderOpen else Icons.Default.Description, contentDescription = null, tint = BurntOrange)
                         },
@@ -1269,13 +1237,13 @@ fun FileItemCard(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Informasi file", color = TextPrimary) },
+                        text = { Text(tr("Informasi file", "File information"), color = TextPrimary) },
                         leadingIcon = { Icon(Icons.Default.Info, null, tint = TextSecondary) },
                         onClick = { menuExpanded = false; onInfo() }
                     )
                     if (!item.isDirectory) {
                         DropdownMenuItem(
-                            text = { Text("Download ke HP", color = TextPrimary) },
+                            text = { Text(tr("Download ke HP", "Download to device"), color = TextPrimary) },
                             leadingIcon = {
                                 Icon(Icons.Default.SaveAlt, contentDescription = null, tint = TerminalCyan)
                             },
@@ -1286,7 +1254,7 @@ fun FileItemCard(
                         )
                     }
                     DropdownMenuItem(
-                        text = { Text("Ganti Nama (Rename)", color = TextPrimary) },
+                        text = { Text(tr("Ganti nama", "Rename"), color = TextPrimary) },
                         leadingIcon = {
                             Icon(Icons.Default.DriveFileRenameOutline, contentDescription = null, tint = TextSecondary)
                         },
@@ -1296,7 +1264,7 @@ fun FileItemCard(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Hapus", color = TerminalRed) },
+                        text = { Text(tr("Hapus", "Delete"), color = TerminalRed) },
                         leadingIcon = {
                             Icon(Icons.Default.Delete, contentDescription = null, tint = TerminalRed)
                         },

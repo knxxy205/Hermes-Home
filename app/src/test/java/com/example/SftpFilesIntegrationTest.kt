@@ -52,6 +52,14 @@ class SftpFilesIntegrationTest {
         val manager = SftpManager()
         val config = ServerConfig("127.0.0.1", server.port, "test", "test-password")
         try {
+            val photo = ByteArray(192 * 1024) { (it % 251).toByte() }
+            var uploaded = 0L
+            manager.uploadFile("/Media/foto", "foto 界*.jpg", photo.inputStream(), config, totalBytes = photo.size.toLong()) { uploaded = it }.getOrThrow()
+            assertArrayEquals(photo, File(root, "Media/foto/foto 界*.jpg").readBytes())
+            assertEquals(photo.size.toLong(), uploaded)
+            manager.uploadFile("/Downloads", "empty.txt", byteArrayOf().inputStream(), config, totalBytes = 0).getOrThrow()
+            assertEquals(0L, File(root, "Downloads/empty.txt").length())
+            assertTrue(manager.uploadFile("/missing", "photo.jpg", photo.inputStream(), config).isFailure)
             val results = manager.searchFiles("/", "SAME", config).getOrThrow()
             assertEquals(setOf("/Media/foto/same.txt", "/Downloads/same.txt"), results.files.map { it.path }.toSet())
             val scoped = manager.searchFiles("/Media", "same", config).getOrThrow()

@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.hermes.HermesApiClient
 import com.example.data.model.ConnectionProfile
 import com.example.data.model.ServerConfig
+import com.example.data.model.LlmProvider
+import com.example.data.model.LlmProviderSettings
 import com.example.data.security.EncryptedStorage
 import com.jcraft.jsch.JSch
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +31,8 @@ data class SettingsUiState(
     val hermesKey: String = "",
     val hermesKeyVisible: Boolean = false,
     val hermesModel: String = "",
+    val hermesProvider: String = "custom",
+    val llmProviders: Map<String, LlmProviderSettings> = emptyMap(),
     val isTestingSsh: Boolean = false,
     val sshTestResult: Pair<Boolean, String>? = null,
     val isTestingHermes: Boolean = false,
@@ -52,8 +56,10 @@ data class SettingsUiState(
             sshPassword = password,
             hermesBaseUrl = hermesUrl.trim(),
             hermesApiKey = hermesKey.trim(),
-            hermesModel = hermesModel.trim()
-        )
+            hermesModel = hermesModel.trim(),
+            hermesProvider = hermesProvider,
+            llmProviders = llmProviders
+        ).withCurrentProviderSaved()
     }
 }
 
@@ -63,6 +69,7 @@ class SettingsViewModel(
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
+    private var hermesTestGeneration = 0
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
     init {
@@ -85,13 +92,33 @@ class SettingsViewModel(
                 password = active.config.sshPassword,
                 hermesUrl = active.config.hermesBaseUrl,
                 hermesKey = active.config.hermesApiKey,
-                hermesModel = active.config.hermesModel
+                hermesModel = active.config.hermesModel,
+                hermesProvider = active.config.hermesProvider,
+                llmProviders = active.config.llmProviders
             )
         }
     }
 
     fun updateProfileName(name: String) {
         _uiState.update { it.copy(profileName = name) }
+    }
+
+    fun syncExternalSelection() {
+        val activeId = encryptedStorage.getActiveProfileId()
+        if (activeId != _uiState.value.activeProfileId) {
+            loadData()
+            _uiState.update { it.copy(sshTestResult = null, hermesTestResult = null, detectedModels = emptyList()) }
+            return
+        }
+        val profiles = encryptedStorage.loadProfiles()
+        val selected = profiles.find { it.id == activeId } ?: return
+        _uiState.update { current ->
+            if (current.activeProfile.config == selected.config) current.copy(profiles = profiles)
+            else current.copy(profiles = profiles, hermesModel = selected.config.hermesModel,
+                hermesProvider = selected.config.hermesProvider, hermesUrl = selected.config.hermesBaseUrl,
+                hermesKey = selected.config.hermesApiKey, llmProviders = selected.config.llmProviders,
+                hermesKeyVisible = false, hermesTestResult = null, detectedModels = emptyList())
+        }
     }
 
     fun updateHost(host: String) {
@@ -115,11 +142,11 @@ class SettingsViewModel(
     }
 
     fun updateHermesUrl(url: String) {
-        _uiState.update { it.copy(hermesUrl = url) }
+        _uiState.update { it.copy(hermesUrl = url, hermesTestResult = null, detectedModels = emptyList()) }
     }
 
     fun updateHermesKey(key: String) {
-        _uiState.update { it.copy(hermesKey = key) }
+        _uiState.update { it.copy(hermesKey = key, hermesTestResult = null, detectedModels = emptyList()) }
     }
 
     fun toggleHermesKeyVisibility() {
@@ -127,7 +154,18 @@ class SettingsViewModel(
     }
 
     fun updateHermesModel(model: String) {
-        _uiState.update { it.copy(hermesModel = model) }
+        _uiState.update { it.copy(hermesModel = model, hermesTestResult = null) }
+    }
+
+    fun selectProvider(provider: LlmProvider) {
+        hermesTestGeneration++
+        _uiState.update { current ->
+            val next = current.buildServerConfig().selectProvider(provider)
+            current.copy(hermesProvider = next.hermesProvider, llmProviders = next.llmProviders,
+                hermesUrl = next.hermesBaseUrl, hermesKey = next.hermesApiKey, hermesModel = next.hermesModel,
+                hermesKeyVisible = false, detectedModels = emptyList(), hermesTestResult = null,
+                isDetectingModels = false, isTestingHermes = false)
+        }
     }
 
     fun clearStatusMessage() {
@@ -161,6 +199,8 @@ class SettingsViewModel(
                 hermesUrl = switched.config.hermesBaseUrl,
                 hermesKey = switched.config.hermesApiKey,
                 hermesModel = switched.config.hermesModel,
+                hermesProvider = switched.config.hermesProvider,
+                llmProviders = switched.config.llmProviders,
                 sshTestResult = null,
                 hermesTestResult = null,
                 detectedModels = emptyList(),
@@ -197,7 +237,7 @@ class SettingsViewModel(
         val newProfile = ConnectionProfile(
             id = newId,
             name = cleanName,
-            config = ServerConfig(
+            config = state.buildServerConfig().copy(
                 sshHost = cleanHost,
                 sshPort = port,
                 sshUser = cleanUser,
@@ -253,6 +293,8 @@ class SettingsViewModel(
                 hermesUrl = next.config.hermesBaseUrl,
                 hermesKey = next.config.hermesApiKey,
                 hermesModel = next.config.hermesModel,
+                hermesProvider = next.config.hermesProvider,
+                llmProviders = next.config.llmProviders,
                 sshTestResult = null,
                 hermesTestResult = null,
                 statusMessage = "Profil dihapus"
@@ -309,6 +351,8 @@ class SettingsViewModel(
                     hermesUrl = first.config.hermesBaseUrl,
                     hermesKey = first.config.hermesApiKey,
                     hermesModel = first.config.hermesModel,
+                    hermesProvider = first.config.hermesProvider,
+                    llmProviders = first.config.llmProviders,
                     sshTestResult = null,
                     hermesTestResult = null,
                     statusMessage = "${importedList.size} Profil berhasil dipulihkan!"
@@ -356,11 +400,18 @@ class SettingsViewModel(
 
     fun testHermesEndpoint() {
         val state = _uiState.value
+        if (state.isTestingHermes) return
         val cfg = state.buildServerConfig()
         _uiState.update { it.copy(isTestingHermes = true, hermesTestResult = null) }
+        val generation = ++hermesTestGeneration
 
         viewModelScope.launch {
             val result = hermesClient.testConnection(cfg)
+            if (generation != hermesTestGeneration) return@launch
+            if (_uiState.value.buildServerConfig() != cfg) {
+                _uiState.update { it.copy(isTestingHermes = false) }
+                return@launch
+            }
             result.onSuccess { msg ->
                 _uiState.update { it.copy(isTestingHermes = false, hermesTestResult = Pair(true, msg)) }
             }.onFailure { err ->
@@ -371,8 +422,9 @@ class SettingsViewModel(
 
     fun autoDetectModels() {
         val state = _uiState.value
+        if (state.isDetectingModels) return
+        val cfg = state.buildServerConfig()
         val url = state.hermesUrl
-        val key = state.hermesKey
         if (url.isBlank()) {
             _uiState.update { it.copy(statusMessage = "Isi Base URL API terlebih dahulu") }
             return
@@ -381,7 +433,11 @@ class SettingsViewModel(
         _uiState.update { it.copy(isDetectingModels = true) }
 
         viewModelScope.launch {
-            val res = hermesClient.fetchAvailableModels(url, key)
+            val res = hermesClient.fetchAvailableModels(cfg)
+            if (_uiState.value.buildServerConfig() != cfg) {
+                _uiState.update { it.copy(isDetectingModels = false) }
+                return@launch
+            }
             _uiState.update { current ->
                 current.copy(isDetectingModels = false)
             }
@@ -413,7 +469,9 @@ class SettingsViewModel(
                 password = "",
                 hermesUrl = "",
                 hermesKey = "",
-                hermesModel = "hermes-3-llama-3.1-8b"
+                hermesModel = "hermes-3-llama-3.1-8b",
+                hermesProvider = "custom",
+                llmProviders = emptyMap()
             )
         }
     }

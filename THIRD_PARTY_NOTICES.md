@@ -9,7 +9,7 @@ Hermes Home's original code is licensed under GPL-3.0-only; see [LICENSE](LICENS
 | Kotlin and kotlinx.coroutines | Apache-2.0. |
 | OkHttp | Apache-2.0. |
 | JSch, mwiede fork, 0.2.20 | BSD-3-Clause with JZlib/jBCrypt notices; see [the bundled notice](app/src/main/assets/licenses/jsch-NOTICE.txt). |
-| Plus Jakarta Sans and JetBrains Mono | SIL Open Font License 1.1; see the font notices under `app/src/main/assets/licenses`. |
+| Plus Jakarta Sans, JetBrains Mono, and Fira Code 6.2 | SIL Open Font License 1.1; see the font notices under `app/src/main/assets/licenses`, including [Fira Code](app/src/main/assets/licenses/fira-code.txt). |
 
 The repository includes full Apache-2.0 and GPL-3.0 license texts, font license notices, and Termux attribution under `app/src/main/assets/licenses`. Tests additionally use JUnit, Robolectric, Roborazzi, and Apache MINA SSHD; these test libraries are not shipped as application runtime dependencies.
 

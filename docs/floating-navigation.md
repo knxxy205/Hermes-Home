@@ -1,0 +1,25 @@
+# Floating bottom navigation
+
+The user requested the previous Terminal / Berkas / Hermes / Pengaturan navigation, with the same size and floating shape, and transparent space outside the white bar.
+
+The restored measurements match the repository's earlier `TailHarnessBottomNav`: 16 dp horizontal and 8 dp vertical margin, 28 dp outer corners, 6 dp shadow, 6 dp row padding, minimum 56 dp item height, 16 dp item corners, 22 dp icons, 11 sp labels, and the original solid blue selected item with white content. Localization and navigation tags are preserved.
+
+The bar is overlaid on the screen instead of occupying a full-width Scaffold bottom slot. Its outer area paints no background. Terminal and chat controls reserve the measured bar height, Files lifts its Upload button, and Files/Settings scrolling content has bottom clearance. The bar remains hidden while the keyboard is visible. Screen/session ownership is preserved.
+
+Transfer notification body taps and the Open folder action now mark that batch as opened before routing to the app. The matching completion notification is cancelled explicitly, and later completion publication checks the persisted opened state. Notification metadata identifies the batch, so opening an older result cannot remove a newer result. A running foreground upload retains its required ongoing notification until the transfer ends.
+
+Design direction: reuse the user's previous navigation styling, ENERGY 1 / RHYTHM 1 / MOTION 1. The shadow separates the floating bar from content; the transparent margins reveal the current screen; the blue item identifies the selected tab. No new visual assets or decorative effects were introduced.
+
+Validation evidence is written under `app/build/outputs/nav-restored/`. The existing Android UI smoke test navigates through all four tabs and captures their layouts. The notification regression sends the actual activity PendingIntents for both a body tap and Open folder, checks dismissal, simulates late publication, and checks that an older tap preserves a newer result. Android's system notification UI and Material controls are retained; no custom notification rendering was added.
+
+The user also requested lower rendering overhead. Terminal output revisions are now collected in a lifecycle-bound effect and invalidate the native terminal view directly, rather than becoming Compose state on every output batch. Collection stops when the tab is hidden or the activity is stopped. Identical terminal preferences skip repeated application, and transfer-history listeners decode changed records on an IO dispatcher instead of the UI thread. These are code-level reductions in work; no device FPS, battery, or percentage improvement is claimed.
+
+Validation uses an API 34 emulator and the local SSH/SFTP fixture. The build and 54 JVM tests passed (`final-build.log`). Notification dismissal and late-publication checks passed in `final-recheck.log`: body and Open folder PendingIntents run through MainActivity, opened batches remain suppressed, and opening an older result preserves the newer notification. The earlier test cleanup failure was ActivityScenario ignoring lifecycle events after MainActivity changed its intent; cleanup now restores the scenario's launch intent before closing. The SSH fixture readiness check uses the uploads directory because accumulated fixture files can move readme.txt outside the lazy list's visible rows. Failed attempts remain in the logs.
+
+The APK is a local debug preview. Device FPS, battery use and memory savings have not been measured. Lint is not reported as passing because of the previously observed Kotlin FIR toolchain crash.
+
+The SSH fixture also needed to catch AsyncSSH's `TerminalSizeChanged` event inside its input loop. An unhandled resize ended its shell before the hidden-UI command could be sent, producing exit -1 and a reconnect. The fixture now keeps reading after a resize, as documented by AsyncSSH. This changes only the disposable local test server, not production SSH transport handling.
+
+The delivered file is `app/build/outputs/nav-restored/Hermes-Home-floating-nav.apk` (20.3 MiB), signed with the existing preview debug key. Signature and ZIP integrity verification passed, and its SHA-256 matches the installed app used for Android tests. The preview package remains `com.aistudio.homeserver.thns.preview`; installation can update the existing preview without uninstalling it.
+
+Final checks PASS: `verified-native-checks.log` records all four Android scenarios passing in one run: notification dismissal and suppression; consecutive uploads, byte comparison and retry isolation; chat and navigation across all four tabs; real SSH output while the UI is removed, restoration, automatic recovery after a transport failure, clean server exit, and cancellation of manual reconnect. The 54 JVM tests passed separately. Navigation screenshots were inspected at 720 × 1280; the original floating shape and transparent outer margins are visible. No FPS or battery improvement is claimed. Changes remain local and uncommitted.

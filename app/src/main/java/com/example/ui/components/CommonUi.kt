@@ -32,7 +32,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.heightIn
 import com.example.ui.theme.BurntOrange
 import com.example.ui.theme.BurntOrangeBadgeBg
 import com.example.ui.theme.BurntOrangeBorder
@@ -45,6 +47,7 @@ import com.example.ui.theme.NavyDarkSurface
 import com.example.ui.theme.TerminalGreen
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.SuccessContainer
 
 @Composable
 fun CustomScreenHeader(
@@ -52,12 +55,14 @@ fun CustomScreenHeader(
     title: String,
     subtitle: String,
     modifier: Modifier = Modifier,
+    titleModifier: Modifier = Modifier,
     trailingContent: (@Composable () -> Unit)? = null
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 20.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Quiet blue badge shared by the four main screens.
@@ -76,14 +81,14 @@ fun CustomScreenHeader(
             )
         }
 
-        Spacer(modifier = Modifier.width(14.dp))
+        Spacer(modifier = Modifier.width(12.dp))
 
-        Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.weight(1f).heightIn(min = 48.dp).then(titleModifier), verticalArrangement = Arrangement.Center) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge.copy(
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 24.sp,
+                    fontSize = 22.sp,
                     letterSpacing = (-0.7).sp,
                     color = TextPrimary
                 ),
@@ -115,6 +120,7 @@ fun TailHarnessCard(
     onLongClick: (() -> Unit)? = null,
     backgroundColor: Color = NavyDarkCard,
     borderColor: Color = NavyCardBorder,
+    shadowElevation: Dp = 2.dp,
     content: @Composable () -> Unit
 ) {
     if (onClick != null && onLongClick != null) {
@@ -123,7 +129,7 @@ fun TailHarnessCard(
                 .fillMaxWidth()
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick),
             shape = RoundedCornerShape(22.dp),
-            shadowElevation = 2.dp,
+            shadowElevation = shadowElevation,
             color = backgroundColor,
             border = BorderStroke(1.dp, borderColor)
         ) {
@@ -133,7 +139,7 @@ fun TailHarnessCard(
         Surface(
             modifier = modifier.fillMaxWidth(),
             shape = RoundedCornerShape(22.dp),
-            shadowElevation = 2.dp,
+            shadowElevation = shadowElevation,
             color = backgroundColor,
             border = BorderStroke(1.dp, borderColor),
             onClick = onClick
@@ -144,7 +150,7 @@ fun TailHarnessCard(
         Surface(
             modifier = modifier.fillMaxWidth(),
             shape = RoundedCornerShape(22.dp),
-            shadowElevation = 2.dp,
+            shadowElevation = shadowElevation,
             color = backgroundColor,
             border = BorderStroke(1.dp, borderColor)
         ) {
@@ -211,7 +217,7 @@ fun ShortcutKeyButton(
 ) {
     val bg = if (isActive) highlightColor else NavyDarkCard
     val borderColor = if (isActive) highlightColor else NavyDarkBorder
-    val textColor = if (isActive) Color.White else TextPrimary
+    val textColor = if (isActive) MaterialTheme.colorScheme.onPrimary else TextPrimary
 
     Box(
         modifier = modifier
@@ -242,8 +248,8 @@ fun StatusBadge(
     modifier: Modifier = Modifier
 ) {
     val badgeColor = if (isSuccess) TerminalGreen else BurntOrange
-    val badgeBg = if (isSuccess) Color(0xFFE8F7F1) else BurntOrangeBadgeBg
-    val badgeBorder = if (isSuccess) Color(0xFFD0EDE0) else BurntOrangeBorder
+    val badgeBg = if (isSuccess) SuccessContainer else BurntOrangeBadgeBg
+    val badgeBorder = if (isSuccess) TerminalGreen.copy(alpha = .35f) else BurntOrangeBorder
 
     Row(
         modifier = modifier
