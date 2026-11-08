@@ -90,13 +90,16 @@ def exercise(output):
                     hierarchy(output, 'after-' + title.lower())
                 return
             pin_field = next((n for n in nodes if n.get('class') == 'android.widget.EditText'
-                              or n.get('resource-id', '').endswith('/pinEntry')), None)
+                               or n.get('resource-id', '').endswith('/pinEntry')), None)
+            if pin_field is None:
+                # Activity recreation can return to the lock screen and start a new challenge.
+                entered_pin = False
             if pin_field is not None and not entered_pin:
                 tap(pin_field)
                 adb('shell', 'input', 'text', EMULATOR_PIN)
                 adb('shell', 'input', 'keyevent', '66')
                 entered_pin = True
-            else:
+            elif pin_field is None:
                 button = find_unlock_button(nodes)
                 if button is not None:
                     tap(button)
