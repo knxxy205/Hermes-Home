@@ -12,6 +12,53 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class FilesViewModelTest {
+    @Test fun initialLoadResolvesHomeDirInsteadOfRoot() = runBlocking {
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        val manager = SftpManager()
+        val vm = FilesViewModel(manager)
+        val config = ServerConfig()
+        try {
+            assertEquals("", vm.uiState.value.currentPath)
+            vm.loadFiles(config = config)
+            withTimeout(5_000) { vm.uiState.first { !it.isLoading } }
+            assertEquals("/home/admin", vm.uiState.value.currentPath)
+            assertNull(vm.uiState.value.errorMessage)
+            assertTrue(vm.uiState.value.files.any { it.name == "docker-compose.yml" })
+            assertTrue(vm.canNavigateUp())
+            vm.navigateUp(config)
+            withTimeout(5_000) { vm.uiState.first { !it.isLoading } }
+            assertEquals("/home", vm.uiState.value.currentPath)
+            assertTrue(vm.uiState.value.files.any { it.name == "admin" })
+        } finally {
+            manager.close()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test fun profileChangeResetsToNewHome() = runBlocking {
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        val manager = SftpManager()
+        val vm = FilesViewModel(manager)
+        val configA = ServerConfig()
+        val configB = ServerConfig(sshHost = "other-server")
+        try {
+            vm.loadFiles(config = configA)
+            withTimeout(5_000) { vm.uiState.first { !it.isLoading } }
+            assertEquals("/home/admin", vm.uiState.value.currentPath)
+            vm.navigateTo("/home/admin/docker", configA)
+            withTimeout(5_000) { vm.uiState.first { !it.isLoading } }
+            assertEquals("/home/admin/docker", vm.uiState.value.currentPath)
+            // Switching profile resets to home
+            vm.loadFiles(config = configB)
+            withTimeout(5_000) { vm.uiState.first { !it.isLoading } }
+            assertEquals("/home/admin", vm.uiState.value.currentPath)
+            assertNull(vm.uiState.value.errorMessage)
+        } finally {
+            manager.close()
+            Dispatchers.resetMain()
+        }
+    }
+
     @Test fun latestQueryRefreshAndNavigationKeepTheRightListing() = runBlocking {
         Dispatchers.setMain(Dispatchers.Unconfined)
         val manager = SftpManager()
