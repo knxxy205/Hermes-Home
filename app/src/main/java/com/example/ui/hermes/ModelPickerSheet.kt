@@ -38,6 +38,19 @@ fun ModelPickerSheet(
     onOpenSettings: () -> Unit,
     initialQuery: String = ""
 ) {
+    ModelPickerDialog(config, onSelect, onDismiss, onOpenSettings, initialQuery,
+        loadModels = client::fetchAvailableModels)
+}
+
+@Composable
+internal fun ModelPickerDialog(
+    config: ServerConfig,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onOpenSettings: () -> Unit,
+    initialQuery: String = "",
+    loadModels: suspend (ServerConfig) -> Result<List<String>>
+) {
     var query by rememberSaveable(initialQuery) { mutableStateOf(initialQuery) }
     var loading by remember { mutableStateOf(true) }
     var models by remember { mutableStateOf(emptyList<String>()) }
@@ -46,7 +59,7 @@ fun ModelPickerSheet(
     LaunchedEffect(config.hermesProvider, config.hermesBaseUrl, config.hermesApiKey, refresh) {
         loading = true
         error = null
-        client.fetchAvailableModels(config)
+        loadModels(config)
             .onSuccess { models = it.distinct().sorted() }
             .onFailure { error = it.localizedMessage ?: "Daftar model belum dapat dimuat." }
         loading = false

@@ -11,26 +11,20 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
-import com.example.data.hermes.HermesApiClient
 import com.example.data.model.ServerConfig
-import com.example.ui.hermes.ModelPickerSheet
+import com.example.ui.hermes.ModelPickerDialog
 import com.example.ui.navigation.LiquidGlassBottomNav
 import com.example.ui.theme.MyApplicationTheme
 import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import com.github.takahirom.roborazzi.RoborazziTaskType
 import com.github.takahirom.roborazzi.captureRoboImage
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import org.json.JSONArray
-import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import org.robolectric.Shadows.shadowOf
 import java.io.File
 import javax.imageio.ImageIO
 
@@ -46,95 +40,71 @@ class ModelPickerTest {
 
     @OptIn(ExperimentalRoborazziApi::class)
     private fun checkPicker(dark: Boolean) {
-        MockWebServer().use { server ->
-            val models = List(160) { "models/gemini-test-${it.toString().padStart(3, '0')}" }
-            fun catalog() = MockResponse().setBody(JSONObject().put("data", JSONArray().apply {
-                models.forEach { put(JSONObject().put("id", it)) }
-            }).toString())
-            server.enqueue(catalog())
-            val client = HermesApiClient()
-            val config = ServerConfig(hermesBaseUrl = server.url("/v1").toString(), hermesModel = models[100])
-            val visible = mutableStateOf(true)
-            var selected: String? = null
-            compose.setContent {
-                MyApplicationTheme(darkTheme = dark) {
-                    Box(Modifier.fillMaxSize()) {
-                        if (visible.value) ModelPickerSheet(
-                            client, config,
-                            onSelect = { selected = it }, onDismiss = { visible.value = false }, onOpenSettings = {})
-                    }
+        val models = List(160) { "models/gemini-test-${it.toString().padStart(3, '0')}" }
+        val config = ServerConfig(hermesModel = models[100])
+        val visible = mutableStateOf(true)
+        var selected: String? = null
+        var requests = 0
+        var result: Result<List<String>> = Result.success(models)
+        compose.setContent {
+            MyApplicationTheme(darkTheme = dark) {
+                Box(Modifier.fillMaxSize()) {
+                    if (visible.value) ModelPickerDialog(
+                        config, onSelect = { selected = it }, onDismiss = { visible.value = false }, onOpenSettings = {},
+                        loadModels = { requests++; result })
                 }
             }
-            try {
-                compose.waitUntil(30_000) {
-                    shadowOf(android.os.Looper.getMainLooper()).idle()
-                    compose.mainClock.advanceTimeByFrame()
-                    compose.onAllNodesWithTag("model_list").fetchSemanticsNodes().isNotEmpty()
-                }
-            } catch (failure: Throwable) {
-                println("Initial catalog request count: ${server.requestCount}")
-                compose.onAllNodes(isRoot()).fetchSemanticsNodes().indices.forEach {
-                    println(compose.onAllNodes(isRoot())[it].printToString())
-                }
-                Thread.getAllStackTraces().forEach { (thread, stack) ->
-                    if (thread.name.contains("Dispatcher") || thread.name.contains("MockWebServer")) {
-                        println("${thread.name}: ${stack.joinToString("\n")}")
-                    }
-                }
-                throw failure
-            }
-            compose.mainClock.advanceTimeBy(500)
-            compose.waitForIdle()
-            val picker = compose.onNodeWithTag("model_picker")
-            val header = compose.onNodeWithTag("model_picker_header")
-            val search = compose.onNodeWithTag("model_search")
-            val list = compose.onNodeWithTag("model_list")
-            val windowBounds = picker.fetchSemanticsNode().boundsInRoot
-            val headerBounds = header.fetchSemanticsNode().boundsInRoot
-            val searchBounds = search.fetchSemanticsNode().boundsInRoot
-            compose.onNodeWithTag("model_option_${models[100]}").assertIsSelected().assertIsDisplayed()
-            list.performScrollToIndex(159)
-            repeat(4) {
-                list.performTouchInput { swipeUp() }
-                assertStableBounds(windowBounds, picker.fetchSemanticsNode().boundsInRoot)
-                assertStableBounds(headerBounds, header.fetchSemanticsNode().boundsInRoot)
-                assertStableBounds(searchBounds, search.fetchSemanticsNode().boundsInRoot)
-            }
-            list.performScrollToIndex(0)
-            repeat(4) {
-                list.performTouchInput { swipeDown() }
-                assertStableBounds(windowBounds, picker.fetchSemanticsNode().boundsInRoot)
-                assertStableBounds(headerBounds, header.fetchSemanticsNode().boundsInRoot)
-            }
-            val directory = File("build/outputs/model-picker-fix/screenshots").apply { mkdirs() }
-            picker.captureRoboImage(File(directory, if (dark) "picker-dark.png" else "picker-light.png").path,
-                roborazziOptions = RoborazziOptions(taskType = RoborazziTaskType.Record))
-            search.performTextInput("gemini 157")
-            compose.onNodeWithTag("model_option_${models[157]}").performClick()
-            assertEquals(models[157], selected)
-            search.performTextReplacement("no-such-model")
-            compose.onNodeWithText("Tidak ada nama model yang cocok. Coba kata lain.").assertIsDisplayed()
-            compose.onNodeWithTag("clear_model_search").performClick()
-            compose.onNodeWithTag("model_option_${models[100]}").assertIsDisplayed()
-            server.enqueue(catalog())
-            compose.onNodeWithTag("reload_models").performClick()
-            try {
-                compose.waitUntil(30_000) {
-                    shadowOf(android.os.Looper.getMainLooper()).idle()
-                    compose.mainClock.advanceTimeByFrame()
-                    server.requestCount == 2 && compose.onAllNodesWithTag("model_list").fetchSemanticsNodes().isNotEmpty()
-                }
-            } catch (failure: Throwable) {
-                println("Reload request count: ${server.requestCount}")
-                compose.onAllNodes(isRoot()).fetchSemanticsNodes().indices.forEach {
-                    println(compose.onAllNodes(isRoot())[it].printToString())
-                }
-                throw failure
-            }
-            assertStableBounds(windowBounds, picker.fetchSemanticsNode().boundsInRoot)
-            compose.onNodeWithTag("close_model_picker").performClick()
-            picker.assertDoesNotExist()
         }
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(500)
+        val picker = compose.onNodeWithTag("model_picker")
+        val header = compose.onNodeWithTag("model_picker_header")
+        val search = compose.onNodeWithTag("model_search")
+        val list = compose.onNodeWithTag("model_list")
+        val windowBounds = picker.fetchSemanticsNode().boundsInRoot
+        val headerBounds = header.fetchSemanticsNode().boundsInRoot
+        val searchBounds = search.fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("model_option_${models[100]}").assertIsSelected().assertIsDisplayed()
+        list.performScrollToIndex(159)
+        repeat(4) {
+            list.performTouchInput { swipeUp() }
+            assertStableBounds(windowBounds, picker.fetchSemanticsNode().boundsInRoot)
+            assertStableBounds(headerBounds, header.fetchSemanticsNode().boundsInRoot)
+            assertStableBounds(searchBounds, search.fetchSemanticsNode().boundsInRoot)
+        }
+        list.performScrollToIndex(0)
+        repeat(4) {
+            list.performTouchInput { swipeDown() }
+            assertStableBounds(windowBounds, picker.fetchSemanticsNode().boundsInRoot)
+            assertStableBounds(headerBounds, header.fetchSemanticsNode().boundsInRoot)
+        }
+        val directory = File("build/outputs/model-picker-fix/screenshots").apply { mkdirs() }
+        picker.captureRoboImage(File(directory, if (dark) "picker-dark.png" else "picker-light.png").path,
+            roborazziOptions = RoborazziOptions(taskType = RoborazziTaskType.Record))
+        search.performTextInput("gemini 157")
+        compose.onNodeWithTag("model_option_${models[157]}").performClick()
+        assertEquals(models[157], selected)
+        search.performTextReplacement("no-such-model")
+        compose.onNodeWithText("Tidak ada nama model yang cocok. Coba kata lain.").assertIsDisplayed()
+        compose.onNodeWithTag("clear_model_search").performClick()
+        compose.onNodeWithTag("model_option_${models[100]}").assertIsDisplayed()
+        compose.onNodeWithTag("reload_models").performClick()
+        compose.runOnIdle { assertEquals(2, requests) }
+        assertStableBounds(windowBounds, picker.fetchSemanticsNode().boundsInRoot)
+
+        compose.runOnIdle { result = Result.failure(IllegalStateException("Fixture catalog unavailable")) }
+        compose.onNodeWithTag("reload_models").performClick()
+        compose.onNodeWithText("Daftar model gagal dimuat").assertIsDisplayed()
+        assertStableBounds(windowBounds, picker.fetchSemanticsNode().boundsInRoot)
+        compose.runOnIdle { result = Result.success(emptyList()) }
+        compose.onNodeWithText("Coba lagi").performClick()
+        compose.onNodeWithText("Server belum menyediakan model.").assertIsDisplayed()
+        compose.runOnIdle { result = Result.success(models) }
+        compose.onNodeWithTag("reload_models").performClick()
+        compose.onNodeWithTag("model_option_${models[100]}").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(5, requests) }
+        compose.onNodeWithTag("close_model_picker").performClick()
+        picker.assertDoesNotExist()
     }
 
     @OptIn(ExperimentalRoborazziApi::class)
