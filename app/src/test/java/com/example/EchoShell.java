@@ -13,6 +13,10 @@ public final class EchoShell implements Command {
     private OutputStream output;
     private ExitCallback callback;
     private Thread worker;
+    private final java.io.ByteArrayOutputStream received = new java.io.ByteArrayOutputStream();
+    public String receivedText() {
+        synchronized (received) { return new String(received.toByteArray(), java.nio.charset.StandardCharsets.UTF_8); }
+    }
     public void setInputStream(InputStream in) { input = in; }
     public void setOutputStream(OutputStream out) { output = out; }
     public void setErrorStream(OutputStream err) { }
@@ -24,6 +28,7 @@ public final class EchoShell implements Command {
                 output.flush();
                 int b;
                 while ((b = input.read()) != -1) {
+                    synchronized (received) { received.write(b); }
                     if (b == 13) output.write("\r\nACK\r\nready> ".getBytes(java.nio.charset.StandardCharsets.UTF_8));
                     else output.write(b);
                     output.flush();

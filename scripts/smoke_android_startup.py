@@ -9,6 +9,31 @@ import xml.etree.ElementTree as ET
 APP_ID = 'com.aistudio.homeserver.thns'
 ACTIVITY = APP_ID + '/com.example.MainActivity'
 EMULATOR_PIN = '246810'
+TAB_LABELS = {
+    'Settings': ('Settings', 'Pengaturan'),
+    'Files': ('Files', 'Berkas'),
+    'Hermes': ('Hermes',),
+    'Terminal': ('Terminal',),
+}
+
+
+def find_tabs(tree):
+    """Prefer the bottom navigation when a heading repeats a tab's label."""
+    tabs = {}
+    for title, labels in TAB_LABELS.items():
+        matches = [node for node in tree.iter('node') if node.get('text', '').strip() in labels]
+        if matches:
+            def top(node):
+                bounds = re.findall(r'\d+', node.get('bounds', ''))
+                return int(bounds[1]) if len(bounds) == 4 else -1
+            tabs[title] = max(matches, key=top)
+    return tabs
+
+
+def find_unlock_button(nodes):
+    labels = ('use pin', 'use screen lock', 'buka homeserver', 'buka hermes home', 'open hermes home',
+              'gunakan pin', 'gunakan kunci layar')
+    return next((node for node in nodes if node.get('text', '').strip().lower() in labels), None)
 
 
 def adb(*args, check=True):
@@ -54,12 +79,11 @@ def exercise(output):
         assert_running()
         if tree is not None:
             nodes = list(tree.iter('node'))
-            tabs = {n.get('text') for n in nodes}
-            if {'Terminal', 'Files', 'Hermes', 'Settings'} <= tabs:
+            if len(find_tabs(tree)) == len(TAB_LABELS):
                 # Check all four screens after real device-credential authentication.
                 for title in ('Settings', 'Files', 'Hermes', 'Terminal'):
                     tree = hierarchy(output, 'before-' + title.lower())
-                    node = next(n for n in tree.iter('node') if n.get('text') == title)
+                    node = find_tabs(tree)[title]
                     tap(node)
                     time.sleep(2)
                     assert_running()
@@ -73,8 +97,7 @@ def exercise(output):
                 adb('shell', 'input', 'keyevent', '66')
                 entered_pin = True
             else:
-                button = next((n for n in nodes if n.get('text', '').lower() in
-                               ('use pin', 'use screen lock', 'buka homeserver')), None)
+                button = find_unlock_button(nodes)
                 if button is not None:
                     tap(button)
         time.sleep(2)

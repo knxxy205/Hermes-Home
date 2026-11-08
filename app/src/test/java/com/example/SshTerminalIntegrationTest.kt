@@ -1,6 +1,7 @@
 package com.example
 
 import android.content.Context
+import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.ServerConfig
@@ -27,12 +28,13 @@ class SshTerminalIntegrationTest {
         Dispatchers.setMain(Dispatchers.Unconfined)
         val context = ApplicationProvider.getApplicationContext<Context>()
         SshTrust.initialize(context)
+        val shell = java.util.concurrent.atomic.AtomicReference<EchoShell>()
         val server = SshServer.setUpDefaultServer().apply {
             host = "127.0.0.1"
             port = 0
             keyPairProvider = SimpleGeneratorHostKeyProvider().apply { algorithm = "RSA"; keySize = 2048 }
             setPasswordAuthenticator { user, password, _ -> user == "test" && password == "test-password" }
-            setShellFactory { EchoShell() }
+            setShellFactory { EchoShell().also { shell.set(it) } }
             start()
         }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -54,6 +56,13 @@ class SshTerminalIntegrationTest {
             input.commitText("ls", 1)
             input.performEditorAction(EditorInfo.IME_ACTION_NONE)
             awaitOutput("ls\nACK")
+            view.onKeyDown(KeyEvent.KEYCODE_C, KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_C, 0, KeyEvent.META_CTRL_ON))
+            input.commitText("z", 1)
+            view.alt = true
+            input.commitText("x", 1)
+            withTimeout(10_000) { while (!shell.get().receivedText().contains("\u0003z\u001bx")) delay(20) }
+            assertFalse(view.ctrl)
+            assertFalse(view.alt)
             // Repeated keyboard-sized resizes while traffic is flowing.
             repeat(20) { i ->
                 terminal.resize(60, if (i % 2 == 0) 10 else 24)

@@ -206,7 +206,8 @@ class FilesViewModel(
         context: Context,
         uris: List<Uri>,
         config: ServerConfig,
-        destinationPath: String = _uiState.value.currentPath
+        destinationPath: String = _uiState.value.currentPath,
+        uploadProfileId: String? = null
     ) {
         if (uris.isEmpty()) return
         val targetPath = destinationPath.trim().let { path ->
@@ -216,34 +217,11 @@ class FilesViewModel(
                 else -> "/${path.trimEnd('/')}"
             }
         }
-        val batchId = "upload-${System.currentTimeMillis()}-${java.util.UUID.randomUUID()}"
-        val queueFile = File(context.filesDir, "sftp-$batchId.json")
-        val queue = JSONArray()
-        uris.forEach { uri ->
-            runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            queue.put(org.json.JSONObject()
-                .put("uri", uri.toString())
-                .put("destinationPath", targetPath))
-        }
-        queueFile.writeText(queue.toString())
-        val profileId = EncryptedStorage(context).getActiveProfileId()
-        val request = OneTimeWorkRequestBuilder<SftpUploadWorker>()
-            .setInputData(workDataOf(
-                SftpUploadWorker.KEY_QUEUE to queueFile.absolutePath,
-                SftpUploadWorker.KEY_PROFILE to profileId,
-                SftpUploadWorker.KEY_REMOTE_PATH to targetPath,
-                SftpUploadWorker.KEY_BATCH_ID to batchId
-            ))
-            .addTag(SftpUploadWorker.TAG)
-            .addTag("${SftpUploadWorker.TAG}:$batchId")
-            .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            "sftp_upload_queue",
-            ExistingWorkPolicy.APPEND_OR_REPLACE,
-            request
-        )
-        _uiState.update {
-            it.copy(transferStatus = null, transferFailed = false, statusMessage = "Antrean upload berjalan di latar belakang (${uris.size} file).")
+        val profileId = uploadProfileId ?: EncryptedStorage(context).getActiveProfileId()
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { com.example.data.transfer.UploadQueue.enqueue(context.applicationContext, uris, profileId, targetPath) }
+                .onSuccess { _uiState.update { it.copy(transferStatus = null, transferFailed = false, statusMessage = "Antrean upload berjalan di latar belakang (${uris.size} file).") } }
+                .onFailure { error -> _uiState.update { it.copy(statusMessage = error.localizedMessage, transferFailed = true) } }
         }
     }
 

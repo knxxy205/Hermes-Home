@@ -7,6 +7,9 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.testing.Test
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
 
 plugins {
   alias(libs.plugins.android.application)
@@ -51,8 +54,8 @@ android {
     applicationId = "com.aistudio.homeserver.thns"
     minSdk = 24
     targetSdk = 36
-    versionCode = 5
-    versionName = "1.3.1"
+    versionCode = 6
+    versionName = "1.3.2"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -88,7 +91,19 @@ android {
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       if (!releaseStorePath.isNullOrBlank()) signingConfig = signingConfigs.getByName("release")
     }
-    debug { }
+    debug {
+      applicationIdSuffix = ".preview"
+        versionNameSuffix = "-chat-preview"
+    }
+    create("compact") {
+      initWith(getByName("debug"))
+      versionNameSuffix = "-smooth-preview"
+      isDebuggable = false
+      // The shrunk preview crashes on the user's device; retain complete code and resources.
+      isMinifyEnabled = false
+      isShrinkResources = false
+      matchingFallbacks += listOf("release")
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
@@ -114,6 +129,11 @@ androidComponents {
     }
     variant.sources.assets?.addGeneratedSourceDirectory(legalAssets, PackageLegalAssets::outputDirectory)
   }
+}
+
+val testJavaToolchains = extensions.getByType<JavaToolchainService>()
+tasks.withType<Test>().configureEach {
+  javaLauncher.set(testJavaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
 }
 
 // Some unused dependencies are commented out below instead of being removed.

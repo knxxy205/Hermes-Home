@@ -7,6 +7,9 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.EmptyCoroutineContext
 
 /** One known-hosts store for terminal, SFTP, and agent commands. */
 object SshTrust {
@@ -20,7 +23,7 @@ object SshTrust {
         if (!knownHosts.exists()) knownHosts.createNewFile()
     }
 
-    fun configure(jsch: JSch): UserInfo {
+    fun configure(jsch: JSch, cancellationJob: Job? = null): UserInfo {
         jsch.setKnownHosts(knownHosts.absolutePath)
         return object : UserInfo {
             override fun getPassphrase(): String? = null
@@ -32,11 +35,12 @@ object SshTrust {
                 // A previously trusted key changing is never accepted automatically.
                 if (message.orEmpty().contains("IDENTIFICATION HAS CHANGED", ignoreCase = true) ||
                     message.orEmpty().contains("replace the key", ignoreCase = true)) return false
-                promptLock.lock()
+                while (!promptLock.tryLock(200, java.util.concurrent.TimeUnit.MILLISECONDS)) cancellationJob?.ensureActive()
                 return try {
+                    cancellationJob?.ensureActive()
                     val request = Request(message.orEmpty(), CompletableDeferred())
                     pending.value = request
-                    runBlocking { kotlinx.coroutines.withTimeoutOrNull(120_000) { request.answer.await() } ?: false }
+                    runBlocking(cancellationJob ?: EmptyCoroutineContext) { kotlinx.coroutines.withTimeoutOrNull(120_000) { request.answer.await() } ?: false }
                 } finally { pending.value = null; promptLock.unlock() }
             }
         }

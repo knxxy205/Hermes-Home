@@ -31,7 +31,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -62,6 +62,8 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -90,6 +92,9 @@ import com.example.BuildConfig
 import com.example.data.hermes.HermesApiClient
 import com.example.data.model.ConnectionProfile
 import com.example.data.model.ServerConfig
+import com.example.data.model.LlmProvider
+import com.example.ui.hermes.ModelPickerSheet
+import com.example.ui.i18n.tr
 import com.example.data.security.EncryptedStorage
 import com.example.ui.components.CustomScreenHeader
 import com.example.ui.components.PillChip
@@ -107,6 +112,7 @@ import com.example.ui.theme.TerminalGreen
 import com.example.ui.theme.TerminalRed
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import androidx.compose.material3.MaterialTheme
 
 @Composable
 fun SettingsScreen(
@@ -114,13 +120,25 @@ fun SettingsScreen(
     hermesClient: HermesApiClient,
     onConfigUpdated: (ServerConfig) -> Unit,
     modifier: Modifier = Modifier,
+    preferencesStore: com.example.data.preferences.AppPreferencesStore? = null,
+    section: String = "app",
+    onSectionChange: ((String) -> Unit)? = null,
+    externalConfig: ServerConfig? = null,
+    bottomOverlayInset: androidx.compose.ui.unit.Dp = 0.dp,
     viewModel: SettingsViewModel = viewModel(
         factory = SettingsViewModel.provideFactory(encryptedStorage, hermesClient)
     )
 ) {
     val context = LocalContext.current
+    val appearanceStore = remember(preferencesStore) { preferencesStore ?: com.example.data.preferences.AppPreferencesStore(context) }
+    val appearance by appearanceStore.state.collectAsState()
+    DisposableEffect(appearanceStore) { onDispose { if (preferencesStore == null) appearanceStore.close() } }
     val scrollState = rememberLazyListState()
+    var localSection by remember { mutableStateOf(section) }
+    val activeSection = if (onSectionChange == null) localSection else section
+    LaunchedEffect(activeSection) { scrollState.scrollToItem(0) }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    LaunchedEffect(externalConfig) { if (externalConfig != null) viewModel.syncExternalSelection() }
 
     var showExportDialog by remember { mutableStateOf(false) }
     var showBackupPasswordDialog by remember { mutableStateOf(false) }
@@ -128,6 +146,10 @@ fun SettingsScreen(
     var backupBusy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var legalDocument by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var showSettingsModelPicker by remember { mutableStateOf(false) }
+    if (showSettingsModelPicker) ModelPickerSheet(hermesClient, uiState.buildServerConfig(),
+        onSelect = { viewModel.updateHermesModel(it); showSettingsModelPicker = false },
+        onDismiss = { showSettingsModelPicker = false }, onOpenSettings = { showSettingsModelPicker = false })
     var legalText by remember { mutableStateOf<String?>(null) }
     var exportPayloadText by remember { mutableStateOf("") }
     var showImportDialog by remember { mutableStateOf(false) }
@@ -161,7 +183,7 @@ fun SettingsScreen(
                         fontSize = 13.sp, lineHeight = 20.sp)
                 }
             },
-            confirmButton = { TextButton(onClick = { legalDocument = null }) { Text("Tutup") } }
+            confirmButton = { TextButton(onClick = { legalDocument = null }) { Text(tr("Tutup", "Close")) } }
         )
     }
 
@@ -178,31 +200,31 @@ fun SettingsScreen(
             newProfileUser.isNotBlank() && validPort
         AlertDialog(
             onDismissRequest = { showAddProfileDialog = false },
-            containerColor = Color.White,
-            titleContentColor = Color(0xff1e293b),
-            textContentColor = Color(0xff64748b),
+            containerColor = NavyDarkCard,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary,
             shape = RoundedCornerShape(28.dp),
-            title = { Text("Tambah host", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("Tambah host", "Add host"), fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Simpan detail server baru sebagai profil koneksi.", color = Color(0xff64748b), fontSize = 13.sp)
+                Text(tr("Simpan detail server baru sebagai profil koneksi.", "Save a new server as a connection profile."), color = TextSecondary, fontSize = 13.sp)
                     OutlinedTextField(
                         value = newProfileName, onValueChange = { newProfileName = it },
-                        label = { Text("Nama profil") }, singleLine = true,
+                        label = { Text(tr("Nama profil", "Profile name")) }, singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xff3b82f6), unfocusedBorderColor = Color(0xffe2e8f0),
-                            focusedTextColor = Color(0xff1e293b), unfocusedTextColor = Color(0xff1e293b),
-                            focusedLabelColor = Color(0xff3b82f6)
+                            focusedBorderColor = BurntOrange, unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                            focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                            focusedLabelColor = BurntOrange
                         ), modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = newProfileHost, onValueChange = { newProfileHost = it },
-                        label = { Text("Host atau alamat IP") }, placeholder = { Text("contoh: server.tailnet") },
+                        label = { Text(tr("Host atau alamat IP", "Host or IP address")) }, placeholder = { Text(tr("contoh: server.tailnet", "for example: server.tailnet")) },
                         singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xff3b82f6), unfocusedBorderColor = Color(0xffe2e8f0),
-                            focusedTextColor = Color(0xff1e293b), unfocusedTextColor = Color(0xff1e293b),
-                            focusedLabelColor = Color(0xff3b82f6)
+                            focusedBorderColor = BurntOrange, unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                            focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                            focusedLabelColor = BurntOrange
                         ), modifier = Modifier.fillMaxWidth()
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -210,9 +232,9 @@ fun SettingsScreen(
                             value = newProfileUser, onValueChange = { newProfileUser = it },
                             label = { Text("Username") }, singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xff3b82f6), unfocusedBorderColor = Color(0xffe2e8f0),
-                                focusedTextColor = Color(0xff1e293b), unfocusedTextColor = Color(0xff1e293b),
-                                focusedLabelColor = Color(0xff3b82f6)
+                                focusedBorderColor = BurntOrange, unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                                focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                                focusedLabelColor = BurntOrange
                             ), modifier = Modifier.weight(1f)
                         )
                         OutlinedTextField(
@@ -220,27 +242,27 @@ fun SettingsScreen(
                             label = { Text("Port") }, singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xff3b82f6), unfocusedBorderColor = Color(0xffe2e8f0),
-                                focusedTextColor = Color(0xff1e293b), unfocusedTextColor = Color(0xff1e293b),
-                                focusedLabelColor = Color(0xff3b82f6)
+                                focusedBorderColor = BurntOrange, unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                                focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                                focusedLabelColor = BurntOrange
                             ), modifier = Modifier.width(104.dp)
                         )
                     }
                     OutlinedTextField(
                         value = newProfilePassword, onValueChange = { newProfilePassword = it },
-                        label = { Text("Password SSH (opsional untuk disimpan nanti)") }, singleLine = true,
+                        label = { Text(tr("Password SSH (opsional untuk disimpan nanti)", "SSH password (optional until saved)")) }, singleLine = true,
                         visualTransformation = if (newProfilePasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
                             IconButton(onClick = { newProfilePasswordVisible = !newProfilePasswordVisible }) {
                                 Icon(if (newProfilePasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
                                     contentDescription = if (newProfilePasswordVisible) "Sembunyikan password" else "Tampilkan password",
-                                    tint = Color(0xff64748b))
+                                    tint = TextSecondary)
                             }
                         },
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xff3b82f6), unfocusedBorderColor = Color(0xffe2e8f0),
-                            focusedTextColor = Color(0xff1e293b), unfocusedTextColor = Color(0xff1e293b),
-                            focusedLabelColor = Color(0xff3b82f6)
+                            focusedBorderColor = BurntOrange, unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                            focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                            focusedLabelColor = BurntOrange
                         ), modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -259,13 +281,13 @@ fun SettingsScreen(
                         }
                     },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xff3b82f6), disabledContainerColor = Color(0xffe8edf5),
-                        disabledContentColor = Color(0xff94a3b8)
+                        containerColor = BurntOrange, disabledContainerColor = NavyDarkSurface,
+                        disabledContentColor = TextSecondary.copy(alpha = .6f)
                     )
-                ) { Text("Simpan") }
+                ) { Text(tr("Simpan", "Save")) }
             },
             dismissButton = {
-                TextButton(onClick = { showAddProfileDialog = false }) { Text("Batal", color = Color(0xff64748b)) }
+                TextButton(onClick = { showAddProfileDialog = false }) { Text(tr("Batal", "Cancel"), color = TextSecondary) }
             }
         )
     }
@@ -273,12 +295,12 @@ fun SettingsScreen(
     if (showBackupPasswordDialog) {
         AlertDialog(
             onDismissRequest = { if (!backupBusy) { showBackupPasswordDialog = false; backupPassword = "" } },
-            title = { Text("Enkripsi backup") },
+            title = { Text(tr("Enkripsi backup", "Encrypt backup")) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Gunakan password minimal 12 karakter. Password ini diperlukan untuk memulihkan backup di perangkat lain.")
+                    Text(tr("Gunakan password minimal 12 karakter. Password ini diperlukan untuk memulihkan backup di perangkat lain.", "Use at least 12 characters. You need this password to restore the backup on another device."))
                     OutlinedTextField(value = backupPassword, onValueChange = { backupPassword = it },
-                        label = { Text("Password backup") }, visualTransformation = PasswordVisualTransformation())
+                        label = { Text(tr("Password backup", "Backup password")) }, visualTransformation = PasswordVisualTransformation())
                 }
             },
             confirmButton = {
@@ -303,13 +325,13 @@ fun SettingsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.FileDownload, contentDescription = null, tint = BurntOrange, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Export Connection Profiles", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(tr("Ekspor profil koneksi", "Export connection profiles"), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Backup dilindungi AES-GCM dengan password kamu. Simpan password terpisah dari backup.",
+                        text = tr("Backup dilindungi AES-GCM dengan password kamu. Simpan password terpisah dari backup.", "The backup uses AES-GCM with your password. Store the password separately."),
                         color = TextSecondary,
                         fontSize = 12.sp,
                         lineHeight = 16.sp
@@ -344,11 +366,11 @@ fun SettingsScreen(
                         Toast.makeText(context, "Backup Copied!", Toast.LENGTH_SHORT).show()
                         showExportDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = Color.White)
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = MaterialTheme.colorScheme.onPrimary)
                 ) {
                     Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Copy to Clipboard", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text(tr("Salin ke clipboard", "Copy to clipboard"), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             },
             dismissButton = {
@@ -367,11 +389,11 @@ fun SettingsScreen(
                     ) {
                         Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Share", fontSize = 12.sp)
+                        Text(tr("Bagikan", "Share"), fontSize = 12.sp)
                     }
                     Spacer(modifier = Modifier.width(6.dp))
                     TextButton(onClick = { showExportDialog = false }) {
-                        Text("Tutup", color = TextSecondary, fontSize = 12.sp)
+                        Text(tr("Tutup", "Close"), color = TextSecondary, fontSize = 12.sp)
                     }
                 }
             }
@@ -387,15 +409,15 @@ fun SettingsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.FileUpload, contentDescription = null, tint = BurntOrange, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Import Connection Profiles", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(tr("Impor profil koneksi", "Import connection profiles"), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(value = backupPassword, onValueChange = { backupPassword = it },
-                        label = { Text("Password backup V2") }, visualTransformation = PasswordVisualTransformation())
+                        label = { Text(tr("Password backup V2", "V2 backup password")) }, visualTransformation = PasswordVisualTransformation())
                     Text(
-                        text = "Tempel backup V2 dan masukkan passwordnya. Backup V1 lama juga masih dapat diimpor tanpa password.",
+                        text = tr("Tempel backup V2 dan masukkan passwordnya. Backup V1 lama juga masih dapat diimpor tanpa password.", "Paste your V2 backup and enter its password. Older V1 backups can still be imported without a password."),
                         color = TextSecondary,
                         fontSize = 12.sp,
                         lineHeight = 16.sp
@@ -442,7 +464,7 @@ fun SettingsScreen(
                     ) {
                         Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(14.dp), tint = BurntOrange)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Paste from Clipboard", fontSize = 12.sp, color = BurntOrange)
+                        Text(tr("Tempel dari clipboard", "Paste from clipboard"), fontSize = 12.sp, color = BurntOrange)
                     }
                 }
             },
@@ -455,9 +477,9 @@ fun SettingsScreen(
                             showImportConfirmDialog = true
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = Color.White)
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = MaterialTheme.colorScheme.onPrimary)
                 ) {
-                    Text("Lanjutkan Import", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text(tr("Lanjutkan impor", "Continue import"), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             },
             dismissButton = {
@@ -477,12 +499,12 @@ fun SettingsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Warning, contentDescription = null, tint = BurntOrange, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Konfirmasi Restore Profil", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(tr("Konfirmasi pemulihan profil", "Confirm profile restore"), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
             },
             text = {
                 Text(
-                    text = "Importing will overwrite current profiles. Continue?",
+                    text = tr("Impor akan mengganti profil saat ini. Lanjutkan?", "Importing will replace your current profiles. Continue?"),
                     color = TextSecondary,
                     fontSize = 13.sp,
                     lineHeight = 18.sp
@@ -507,9 +529,9 @@ fun SettingsScreen(
                         }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = Color.White)
+                    colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = MaterialTheme.colorScheme.onPrimary)
                 ) {
-                    Text("Ya, Timpa & Restore", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text(tr("Ganti dan pulihkan", "Replace and restore"), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             },
             dismissButton = {
@@ -527,18 +549,26 @@ fun SettingsScreen(
     ) {
         CustomScreenHeader(
             icon = Icons.Default.Settings,
-            title = "Settings",
-            subtitle = "Koneksi, profil & keamanan"
+            title = tr("Pengaturan", "Settings"),
+            subtitle = tr("Terminal, chat, dan koneksi", "Terminal, chat, and connections")
         )
 
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.material3.FilterChip(selected = activeSection == "app", onClick = { localSection = "app"; onSectionChange?.invoke("app") }, label = { Text(tr("Aplikasi", "App")) })
+            androidx.compose.material3.FilterChip(selected = activeSection == "connection", onClick = { localSection = "connection"; onSectionChange?.invoke("connection") }, label = { Text(tr("Koneksi & model", "Connections & models")) })
+        }
         LazyColumn(
             state = scrollState,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .testTag("settings_list"),
+            contentPadding = PaddingValues(bottom = bottomOverlayInset),
+            verticalArrangement = Arrangement.spacedBy(if (activeSection == "app") 16.dp else 20.dp)
         ) {
+            if (activeSection == "app") appPreferenceItems(appearance, appearanceStore::update)
+            if (activeSection == "connection") {
             item(key = "profiles", contentType = "profiles") {
             // Profile Selector Card (Rumah LAN vs Di Luar Tailscale)
             TailHarnessCard(
@@ -565,7 +595,7 @@ fun SettingsScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Profil Koneksi",
+                                text = tr("Profil koneksi", "Connection profiles"),
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp
@@ -580,7 +610,7 @@ fun SettingsScreen(
                     }
 
                     Text(
-                        text = "Pilih koneksi untuk di rumah atau saat bepergian.",
+                        text = tr("Pilih koneksi untuk di rumah atau saat bepergian.", "Choose a connection for home or away."),
                         color = TextSecondary,
                         fontSize = 12.sp,
                         lineHeight = 16.sp
@@ -643,7 +673,7 @@ fun SettingsScreen(
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = BurntOrange)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Tambah", fontSize = 12.sp, color = BurntOrange)
+                            Text(tr("Tambah", "Add"), fontSize = 12.sp, color = BurntOrange)
                         }
                     }
 
@@ -655,7 +685,7 @@ fun SettingsScreen(
                         OutlinedTextField(
                             value = uiState.profileName,
                             onValueChange = { viewModel.updateProfileName(it) },
-                            label = { Text("Label Profil Aktif", color = TextSecondary) },
+                            label = { Text(tr("Label profil aktif", "Active profile label"), color = TextSecondary) },
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = BurntOrange,
@@ -701,7 +731,7 @@ fun SettingsScreen(
                         ) {
                             Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(15.dp), tint = BurntOrange)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Export Profiles", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BurntOrange)
+                            Text(tr("Ekspor profil", "Export profiles"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BurntOrange)
                         }
 
                         OutlinedButton(
@@ -717,7 +747,7 @@ fun SettingsScreen(
                         ) {
                             Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(15.dp), tint = TextSecondary)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Import Profiles", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextSecondary)
+                            Text(tr("Impor profil", "Import profiles"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextSecondary)
                         }
                     }
                 }
@@ -762,7 +792,7 @@ fun SettingsScreen(
                             }
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Kredensial terlindungi",
+                                text = tr("Kredensial terlindungi", "Protected credentials"),
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
@@ -770,12 +800,12 @@ fun SettingsScreen(
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         StatusBadge(
-                            text = "Terenkripsi",
+                            text = tr("Terenkripsi", "Encrypted"),
                             isSuccess = true
                         )
                     }
                     Text(
-                        text = "Kredensial disimpan terenkripsi menggunakan Android Keystore.",
+                        text = tr("Kredensial disimpan terenkripsi menggunakan Android Keystore.", "Credentials are encrypted using Android Keystore."),
                         color = TextSecondary,
                         fontSize = 12.sp,
                         lineHeight = 16.sp
@@ -810,13 +840,13 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "Koneksi SSH",
+                                text = tr("Koneksi SSH", "SSH connection"),
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp
                             )
                             Text(
-                                text = "Gunakan IP Tailscale (100.x.y.z) atau MagicDNS host",
+                                text = tr("Gunakan IP server, IP Tailscale, atau nama host.", "Use a server IP, Tailscale IP, or host name."),
                                 color = TextSecondary,
                                 fontSize = 11.sp
                             )
@@ -831,7 +861,7 @@ fun SettingsScreen(
                         OutlinedTextField(
                             value = uiState.host,
                             onValueChange = { viewModel.updateHost(it) },
-                            label = { Text("IP Tailscale / Host", color = TextSecondary) },
+                            label = { Text(tr("Alamat server / Host", "Server address / Host"), color = TextSecondary) },
                             placeholder = { Text("100.115.92.40") },
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
@@ -866,7 +896,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = uiState.user,
                         onValueChange = { viewModel.updateUser(it) },
-                        label = { Text("SSH Username", color = TextSecondary) },
+                        label = { Text(tr("Username SSH", "SSH username"), color = TextSecondary) },
                         placeholder = { Text("admin / root") },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
@@ -883,14 +913,14 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = uiState.password,
                         onValueChange = { viewModel.updatePassword(it) },
-                        label = { Text("SSH Password", color = TextSecondary) },
+                        label = { Text(tr("Password SSH", "SSH password"), color = TextSecondary) },
                         singleLine = true,
                         visualTransformation = if (uiState.passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
                             IconButton(onClick = { viewModel.togglePasswordVisibility() }) {
                                 Icon(
                                     imageVector = if (uiState.passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                    contentDescription = "Toggle password",
+                                    contentDescription = tr("Tampilkan atau sembunyikan password", "Show or hide password"),
                                     tint = TextSecondary
                                 )
                             }
@@ -924,7 +954,7 @@ fun SettingsScreen(
                                 Icon(Icons.Default.NetworkCheck, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                             }
-                            Text("Test Koneksi SSH", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(tr("Cek koneksi SSH", "Test SSH connection"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
 
                         uiState.sshTestResult?.let { (success, _) ->
@@ -982,17 +1012,19 @@ fun SettingsScreen(
                                 fontSize = 15.sp
                             )
                             Text(
-                                text = "Hubungkan ke API agent pribadi kamu",
+                                text = tr("Pilih layanan AI untuk chat Hermes", "Choose an AI service for Hermes chat"),
                                 color = TextSecondary,
                                 fontSize = 11.sp
                             )
                         }
                     }
 
-                    // Base URL
+                    LlmProviderPicker(uiState.hermesProvider, viewModel::selectProvider)
+
                     OutlinedTextField(
                         value = uiState.hermesUrl,
                         onValueChange = { viewModel.updateHermesUrl(it) },
+                        readOnly = uiState.hermesProvider != "custom",
                         label = { Text("Base URL API", color = TextSecondary) },
                         placeholder = { Text("https://100.115.92.40:11434") },
                         singleLine = true,
@@ -1011,8 +1043,8 @@ fun SettingsScreen(
                         OutlinedTextField(
                             value = uiState.hermesModel,
                             onValueChange = { viewModel.updateHermesModel(it) },
-                            label = { Text("Nama Model", color = TextSecondary) },
-                            placeholder = { Text("hermes-3-llama-3.1-8b / auto-detect") },
+                        label = { Text(tr("Nama model", "Model name"), color = TextSecondary) },
+                            placeholder = { Text(tr("Pilih dari daftar atau isi ID model", "Choose from the list or enter a model ID")) },
                             singleLine = true,
                             trailingIcon = {
                                 if (uiState.isDetectingModels) {
@@ -1022,10 +1054,10 @@ fun SettingsScreen(
                                         color = BurntOrange
                                     )
                                 } else {
-                                    IconButton(onClick = { viewModel.autoDetectModels() }) {
+                                    IconButton(onClick = { showSettingsModelPicker = true }) {
                                         Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = "Deteksi Model Otomatis",
+                                            imageVector = Icons.Default.List,
+                                            contentDescription = tr("Pilih model provider", "Choose provider model"),
                                             tint = BurntOrange
                                         )
                                     }
@@ -1043,10 +1075,10 @@ fun SettingsScreen(
 
                         // Auto-Detect Action Button for 9router / Ollama / vLLM
                         OutlinedButton(
-                            onClick = { viewModel.autoDetectModels() },
+                            onClick = { showSettingsModelPicker = true },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(42.dp),
+                                .height(48.dp).testTag("settings_choose_model"),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = BurntOrange),
                             border = BorderStroke(1.dp, BurntOrange.copy(alpha = 0.6f)),
@@ -1060,17 +1092,17 @@ fun SettingsScreen(
                                     color = BurntOrange
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Memindai 9router / Ollama / vLLM...", fontSize = 12.sp, color = BurntOrange)
+                                Text(tr("Memuat model…", "Loading models…"), fontSize = 12.sp, color = BurntOrange)
                             } else {
-                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp), tint = BurntOrange)
+                                Icon(Icons.Default.List, contentDescription = null, modifier = Modifier.size(16.dp), tint = BurntOrange)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Deteksi Otomatis Model (9router / Ollama)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BurntOrange)
+                                Text(tr("Pilih model", "Choose model"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BurntOrange)
                             }
                         }
 
                         Text(
-                            text = "Mendukung auto-detect 9router, Ollama (/api/tags), vLLM (/v1/models), LiteLLM, dan reverse proxy.",
-                            color = TextSecondary.copy(alpha = 0.7f),
+                            text = tr("Daftar diambil dari provider. Pilih model chat yang mendukung teks, atau masukkan ID model secara manual.", "Models come from your provider. Choose a text chat model, or enter its ID manually."),
+                            color = TextSecondary,
                             fontSize = 11.sp,
                             lineHeight = 15.sp
                         )
@@ -1106,7 +1138,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = uiState.hermesKey,
                         onValueChange = { viewModel.updateHermesKey(it) },
-                        label = { Text("API Key (Opsional / Bearer Token)", color = TextSecondary) },
+                        label = { Text(if (LlmProvider.fromId(uiState.hermesProvider).requiresKey) "API key ${LlmProvider.fromId(uiState.hermesProvider).label}" else "API key (opsional)", color = TextSecondary) },
                         placeholder = { Text("sk-...") },
                         singleLine = true,
                         visualTransformation = if (uiState.hermesKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
@@ -1114,7 +1146,7 @@ fun SettingsScreen(
                             IconButton(onClick = { viewModel.toggleHermesKeyVisibility() }) {
                                 Icon(
                                     imageVector = if (uiState.hermesKeyVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                    contentDescription = "Toggle API Key",
+                                    contentDescription = if (uiState.hermesKeyVisible) "Sembunyikan API key" else "Tampilkan API key",
                                     tint = TextSecondary
                                 )
                             }
@@ -1137,6 +1169,8 @@ fun SettingsScreen(
                     ) {
                         OutlinedButton(
                             onClick = { viewModel.testHermesEndpoint() },
+                            enabled = !uiState.isTestingHermes,
+                            modifier = Modifier.testTag("settings_test_ai"),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = BurntOrange),
                             border = BorderStroke(1.dp, BurntOrange),
                             shape = RoundedCornerShape(12.dp)
@@ -1148,7 +1182,7 @@ fun SettingsScreen(
                                 Icon(Icons.Default.SmartToy, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                             }
-                            Text("Test Endpoint Hermes", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(tr("Cek koneksi AI", "Test AI connection"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
 
                         uiState.hermesTestResult?.let { (success, _) ->
@@ -1161,6 +1195,8 @@ fun SettingsScreen(
                             )
                         }
                     }
+
+                    Text(tr("Cek koneksi mengirim pesan singkat ke model dan memakai kuota API provider.", "Testing sends a short message to the model and uses your provider API quota."), color = TextSecondary, fontSize = 11.sp)
 
                     uiState.hermesTestResult?.let { (_, msg) ->
                         Text(
@@ -1181,7 +1217,7 @@ fun SettingsScreen(
                 onClick = { viewModel.saveSettings(onConfigUpdated) },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = BurntOrange,
-                    contentColor = Color.White
+                    contentColor = MaterialTheme.colorScheme.onPrimary
                 ),
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
@@ -1191,7 +1227,7 @@ fun SettingsScreen(
             ) {
                 Icon(Icons.Default.Save, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Simpan pengaturan", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(tr("Simpan pengaturan", "Save settings"), fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
 
             // Quick Preset / Demo Button
@@ -1204,10 +1240,11 @@ fun SettingsScreen(
             ) {
                 Icon(Icons.Default.VpnKey, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Isi contoh konfigurasi (tanpa kredensial)", fontSize = 13.sp)
+                Text(tr("Isi contoh konfigurasi (tanpa kredensial)", "Fill sample configuration (no credentials)"), fontSize = 13.sp)
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+            }
             }
             }
             item(key = "about", contentType = "about") {
@@ -1220,10 +1257,10 @@ fun SettingsScreen(
                             color = TextSecondary, fontSize = 12.sp)
                         Text("Tanpa jaminan. Boleh dimodifikasi dan didistribusikan sesuai GPL versi 3.",
                             color = TextSecondary, fontSize = 12.sp)
-                        TextButton(onClick = { legalDocument = "Lisensi aplikasi · GPL-3.0-only" to "LICENSE" }) { Text("Lisensi aplikasi") }
-                        TextButton(onClick = { legalDocument = "Kebijakan privasi" to "PRIVACY.md" }) { Text("Kebijakan privasi") }
-                        TextButton(onClick = { legalDocument = "Pelaporan keamanan" to "SECURITY.md" }) { Text("Pelaporan keamanan") }
-                        TextButton(onClick = { legalDocument = "Lisensi pihak ketiga" to "THIRD_PARTY_NOTICES.md" }) { Text("Lisensi pihak ketiga") }
+                        TextButton(onClick = { legalDocument = "GPL-3.0-only" to "LICENSE" }) { Text(tr("Lisensi aplikasi", "App license")) }
+                        TextButton(onClick = { legalDocument = "Privacy" to "PRIVACY.md" }) { Text(tr("Kebijakan privasi", "Privacy policy")) }
+                        TextButton(onClick = { legalDocument = "Security" to "SECURITY.md" }) { Text(tr("Pelaporan keamanan", "Security reporting")) }
+                        TextButton(onClick = { legalDocument = "Notices" to "THIRD_PARTY_NOTICES.md" }) { Text(tr("Lisensi pihak ketiga", "Third-party licenses")) }
                     }
                 }
             }

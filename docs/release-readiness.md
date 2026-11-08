@@ -1,5 +1,17 @@
 # Beta release readiness
 
+## 1.3.2 candidate preparation (8 November 2026)
+
+The updated app uses the main release package `com.aistudio.homeserver.thns`, version 1.3.2, code 6. Local debug/compact previews use `.preview` and a different certificate, so they install beside the GitHub beta. A release update must reuse the original GitHub signing identity; see [update compatibility](update-compatibility.md).
+
+Current local validation passes all **73 JVM tests** and **8 Python tests**, including the startup script's new Indonesian/English tab and manual-unlock label regressions. Release lint completes with **zero errors and 106 warnings**, and `assembleRelease` succeeds. Language-aware resource access and reactive terminal connection-state reads were corrected to satisfy release lint. The production credential-literal guard and staged Gitleaks scan also pass. These scans have a limited scope and are not a complete security certification.
+
+README now documents the updated features, provider/effort limitations, setup, main-package update continuity, previews, and verification boundaries. Its new images come from the maintainer-provided `image/` folder. Privacy documentation covers direct providers, upload staging, transfer-history encryption, and the SSH foreground service. The published download remains 1.3.1-beta.1 until another release is explicitly published.
+
+Signed-candidate preparation uses the existing GitHub workflow with publication disabled. The 1.3.2 signed candidate still needs its own Android startup and retained-data update checks; earlier 1.3.1 emulator results below do not establish a pass for 1.3.2. Physical phone frame timing, live provider behavior, and a retained-data upgrade are not certified by local unit tests.
+
+## Historical 1.3 preparation
+
 Review date: 2026-11-04. This is a record of local checks and remaining work, not a security certification.
 
 ## Repository history

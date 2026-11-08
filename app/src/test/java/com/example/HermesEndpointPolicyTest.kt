@@ -56,10 +56,38 @@ class HermesEndpointPolicyTest {
 
     @Test fun directPrivateServerStillWorks() = runBlocking {
         MockWebServer().use { server ->
-            server.enqueue(MockResponse().setBody("{}"))
+            server.enqueue(MockResponse().setBody("{\"choices\":[{\"message\":{\"content\":\"OK\"}}]}"))
             val api = HermesApiClient()
             assertTrue(api.testConnection(ServerConfig(hermesBaseUrl = server.url("/").toString(), hermesModel = "test-model")).isSuccess)
             assertEquals("/v1/chat/completions", server.takeRequest().path)
+        }
+    }
+
+    @Test fun responsePreferencesAndSelectedModelReachTheActualRequest() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("{\"choices\":[{\"message\":{\"content\":\"Siap\"}}]}"))
+            val preferences = com.example.data.preferences.AppPreferences(answerStyle = "concise", hermesInstructions = "Jelaskan dampak perintah.")
+            val result = HermesApiClient().sendMessage("Periksa server", emptyList(),
+                ServerConfig(hermesBaseUrl = server.url("/").toString(), hermesModel = "chosen-model"),
+                responseInstructions = preferences.responseInstructions())
+            assertEquals("Siap", result.getOrThrow())
+            val body = org.json.JSONObject(server.takeRequest().body.readUtf8())
+            assertEquals("chosen-model", body.getString("model"))
+            val instruction = body.getJSONArray("messages").getJSONObject(0).getString("content")
+            assertTrue(instruction.contains("jawaban ringkas"))
+            assertTrue(instruction.contains("Jelaskan dampak perintah."))
+            assertFalse(instruction.contains("You have direct SSH access"))
+        }
+    }
+
+    @Test fun anEmptyModelCatalogIsDifferentFromRejectedCredentials() = runBlocking {
+        MockWebServer().use { server ->
+            repeat(6) { server.enqueue(MockResponse().setBody("{\"data\":[]}")) }
+            val config = ServerConfig(hermesBaseUrl = server.url("/").toString())
+            assertEquals(emptyList<String>(), HermesApiClient().fetchAvailableModels(config).getOrThrow())
+            server.enqueue(MockResponse().setResponseCode(401))
+            val rejected = HermesApiClient().fetchAvailableModels(config)
+            assertTrue(rejected.exceptionOrNull()!!.message!!.contains("401"))
         }
     }
 }

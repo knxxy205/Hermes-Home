@@ -132,7 +132,7 @@ services:
         close()
 
         val jsch = JSch()
-        val trust = com.example.data.security.SshTrust.configure(jsch)
+        val trust = com.example.data.security.SshTrust.configure(jsch, kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])
         val session = jsch.getSession(config.sshUser, config.sshHost, config.sshPort)
         session.setPassword(config.sshPassword)
         session.userInfo = trust
@@ -419,7 +419,7 @@ services:
             val sftp = getConnectedSftp(config)
             inputStream.use { stream ->
                 var uploaded = 0L
-                sftp.put(stream, targetPath, object : SftpProgressMonitor {
+            sftp.put(stream, literalPath(targetPath), object : SftpProgressMonitor {
                     override fun init(op: Int, src: String?, dest: String?, max: Long) {
                         uploaded = 0L
                         onProgress(0L)
@@ -429,8 +429,12 @@ services:
                         onProgress(uploaded)
                         return true
                     }
-                    override fun end() { onProgress(if (totalBytes >= 0) totalBytes else uploaded) }
+                    override fun end() { onProgress(uploaded) }
                 }, ChannelSftp.OVERWRITE)
+                val remoteSize = sftp.stat(literalPath(targetPath)).size
+                check(remoteSize == uploaded && (totalBytes < 0 || uploaded == totalBytes)) {
+                    "Upload tidak lengkap: $uploaded byte terkirim, $remoteSize byte di server"
+                }
             }
             Result.success(Unit)
         } catch (e: Exception) {

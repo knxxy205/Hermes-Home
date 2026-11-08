@@ -5,25 +5,29 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.fragment.app.FragmentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -54,9 +58,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.Forum
@@ -67,11 +74,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
 import com.example.data.hermes.ChatMessage
@@ -99,7 +110,15 @@ import com.example.ui.theme.NavyDarkSurface
 import com.example.ui.theme.TerminalGreen
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.IsDarkAppearance
+import com.example.ui.theme.resolveDarkAppearance
 import kotlinx.coroutines.launch
+import com.example.ui.i18n.tr
+import androidx.compose.animation.core.updateTransition
+import com.example.ui.navigation.LiquidGlassBottomNav
+import com.example.ui.navigation.navigationPage
+import com.example.ui.navigation.rememberNavigationAnimationsEnabled
+import com.example.ui.navigation.navigationContentPadding
 
 enum class AppTab(val title: String, val icon: ImageVector, val tag: String) {
     TERMINAL("Terminal", Icons.Default.Terminal, "tab_terminal"),
@@ -108,15 +127,26 @@ enum class AppTab(val title: String, val icon: ImageVector, val tag: String) {
     SETTINGS("Settings", Icons.Default.Settings, "tab_settings")
 }
 
-class MainActivity : FragmentActivity() {
+class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        val themeMode = getSharedPreferences("hermes_app_preferences", MODE_PRIVATE).getString("theme_mode", "system") ?: "system"
+        delegate.localNightMode = when (themeMode) {
+            "light" -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
+            "dark" -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+            else -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+        }
         super.onCreate(savedInstanceState)
+        val language = getSharedPreferences("hermes_app_preferences", MODE_PRIVATE).getString("app_language", "id") ?: "id"
+        val wanted = androidx.core.os.LocaleListCompat.forLanguageTags(if (language == "system") "" else language)
+        if (androidx.appcompat.app.AppCompatDelegate.getApplicationLocales() != wanted) androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(wanted)
+        com.example.data.transfer.TransferNavigation.accept(intent, this)
         com.example.data.security.SshTrust.initialize(applicationContext)
+        com.example.data.transfer.UploadCoordinator.observe(applicationContext)
         if (android.os.Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
-        )
+        val dark = resolveDarkAppearance(themeMode, resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES)
+        val barStyle = if (dark) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+            else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, 0xff101722.toInt())
+        enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
         requestHighestSupportedRefreshRate()
 
         // Schedule periodic 1-hour background server health check
@@ -129,27 +159,29 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        com.example.data.transfer.TransferNavigation.accept(intent, this)
+    }
+
     @Suppress("DEPRECATION")
     private fun requestHighestSupportedRefreshRate() {
-        val displayModes = if (android.os.Build.VERSION.SDK_INT >= 30) {
-            display?.supportedModes?.toList().orEmpty()
-        } else {
-            windowManager.defaultDisplay.supportedModes.toList()
-        }
-        var preferredRate = 0f
-        for (mode in displayModes) {
-            if (mode.refreshRate > preferredRate) preferredRate = mode.refreshRate
-        }
-        if (preferredRate <= 60f) return
-
+        val currentDisplay = if (android.os.Build.VERSION.SDK_INT >= 30) display else windowManager.defaultDisplay
+        val currentMode = currentDisplay?.mode ?: return
+        val preferredMode = currentDisplay.supportedModes
+            .filter { it.physicalWidth == currentMode.physicalWidth && it.physicalHeight == currentMode.physicalHeight }
+            .maxByOrNull { it.refreshRate } ?: return
+        if (preferredMode.refreshRate <= 60f) return
         window.attributes = window.attributes.apply {
-            preferredRefreshRate = preferredRate
+            preferredDisplayModeId = preferredMode.modeId
+            preferredRefreshRate = preferredMode.refreshRate
         }
     }
 }
 
 @Composable
-fun TailHarnessApp(activity: FragmentActivity? = null) {
+fun TailHarnessApp(activity: androidx.fragment.app.FragmentActivity? = null) {
     val context = LocalContext.current
     var isVaultUnlocked by remember { mutableStateOf(false) }
     var backgroundAt by remember { mutableStateOf(0L) }
@@ -162,11 +194,6 @@ fun TailHarnessApp(activity: FragmentActivity? = null) {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-    LaunchedEffect(activity) {
-        if (activity != null && !isVaultUnlocked) {
-            BiometricAuthHelper.showBiometricPrompt(activity, onSuccess = { isVaultUnlocked = true }, onError = {})
-        }
     }
     if (isVaultUnlocked) MainContentScreen() else VaultLockScreen {
             if (activity == null) isVaultUnlocked = true
@@ -182,36 +209,54 @@ fun TailHarnessApp(activity: FragmentActivity? = null) {
 fun VaultLockScreen(onUnlockRequested: () -> Unit) {
     val context = LocalContext.current
     val config = remember { EncryptedStorage(context).loadConfig() }
-    Box(Modifier.fillMaxSize().background(NavyDarkBackground).padding(24.dp), contentAlignment = Alignment.Center) {
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(76.dp).clip(RoundedCornerShape(20.dp)).background(BurntOrange)) {
-                    Image(painterResource(R.drawable.homeserver_mark), "Hermes Home", Modifier.fillMaxSize())
-                }
-                Spacer(Modifier.width(16.dp))
-                Column {
-                    Text("Hermes", color = TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp)
-                    Text("Home", color = BurntOrange, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp)
-                }
+    val dark = IsDarkAppearance
+    DisposableEffect(context, dark) {
+        val barStyle = if (dark) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+            else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, 0xff101722.toInt())
+        (context as? androidx.activity.ComponentActivity)?.enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+        onDispose { }
+    }
+    BoxWithConstraints(Modifier.fillMaxSize().background(NavyDarkBackground).safeDrawingPadding(), contentAlignment = Alignment.Center) {
+        val titleSize = if (maxWidth < 360.dp) 32.sp else 36.sp
+        val minimumHeight = maxHeight
+        Column(
+            Modifier.widthIn(max = 520.dp).fillMaxWidth()
+                .verticalScroll(rememberScrollState()).heightIn(min = minimumHeight)
+                .padding(horizontal = 26.dp, vertical = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(Modifier.weight(1.3f))
+            Box(Modifier.size(98.dp).clip(RoundedCornerShape(30.dp)).background(com.example.ui.theme.PrimaryBlue)) {
+                Image(painterResource(R.drawable.homeserver_mark), "Hermes Home", Modifier.fillMaxSize().scale(1.6f))
             }
-            Spacer(Modifier.height(8.dp))
-            Text("Server pribadi, dalam genggaman. Buka dengan sidik jari atau PIN perangkat untuk melanjutkan.",
-                color = TextSecondary, fontSize = 13.sp, lineHeight = 19.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 16.dp))
             Spacer(Modifier.height(24.dp))
-            Row(Modifier.clip(RoundedCornerShape(12.dp)).background(NavyDarkCard).border(1.dp, NavyDarkBorder, RoundedCornerShape(12.dp))
-                .padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(buildAnnotatedString {
+                append("Hermes ")
+                withStyle(SpanStyle(color = BurntOrange)) { append("Home") }
+            }, color = TextPrimary, fontSize = titleSize,
+                fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(10.dp))
+            Text(tr("Server pribadi, dalam genggaman.\nBuka dengan sidik jari atau PIN perangkat.", "Your server, in your hand.\nUnlock with your fingerprint or device PIN."),
+                color = TextSecondary, fontSize = 14.sp, lineHeight = 20.sp, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(24.dp))
+            Row(Modifier.clip(RoundedCornerShape(50)).background(NavyDarkCard).border(1.dp, NavyDarkBorder, RoundedCornerShape(50))
+                .padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Security, null, tint = TerminalGreen, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(if (config.isSshConfigured) config.sshHost else "Koneksi privat melalui Tailscale", color = TextPrimary,
-                    fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                Text(if (config.isSshConfigured) config.sshHost else tr("Koneksi privat melalui Tailscale", "Private connection through Tailscale"), color = TextPrimary,
+                    fontSize = 15.sp, modifier = Modifier.weight(1f, fill = false), textAlign = TextAlign.Center)
             }
             Spacer(Modifier.height(32.dp))
-            Button(onClick = onUnlockRequested, modifier = Modifier.fillMaxWidth().height(50.dp).testTag("unlock_vault_button"),
-                shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = Color.White)) {
-                Icon(Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.weight(1f))
+            Button(onClick = onUnlockRequested, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("unlock_vault_button"),
+                shape = RoundedCornerShape(20.dp), colors = ButtonDefaults.buttonColors(containerColor = BurntOrange, contentColor = MaterialTheme.colorScheme.onPrimary)) {
+                Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Buka homeserver", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text(tr("Buka Hermes Home", "Open Hermes Home"), fontWeight = FontWeight.Bold, fontSize = 18.sp, textAlign = TextAlign.Center)
             }
+            Spacer(Modifier.height(14.dp))
+            Text(tr("Akses lewat jaringan privat", "Access over a private network"), color = TextSecondary,
+                fontSize = 12.sp, textAlign = TextAlign.Center)
         }
     }
 }
@@ -222,56 +267,70 @@ fun MainContentScreen() {
     trustRequest?.let { request ->
         AlertDialog(
             onDismissRequest = { request.answer.complete(false) },
-            title = { Text("Verifikasi identitas server") },
-            text = { Text(request.message + "\n\nCocokkan fingerprint ini dengan server kamu sebelum mempercayainya.") },
-            confirmButton = { TextButton(onClick = { request.answer.complete(true) }) { Text("Percayai server") } },
-            dismissButton = { TextButton(onClick = { request.answer.complete(false) }) { Text("Batal") } }
+            title = { Text(tr("Verifikasi identitas server", "Verify server identity")) },
+            text = { Text(request.message + tr("\n\nCocokkan fingerprint ini dengan server kamu sebelum mempercayainya.", "\n\nCheck this fingerprint against your server before trusting it.")) },
+            confirmButton = { TextButton(onClick = { request.answer.complete(true) }) { Text(tr("Percayai server", "Trust server")) } },
+            dismissButton = { TextButton(onClick = { request.answer.complete(false) }) { Text(tr("Batal", "Cancel")) } }
         )
     }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
     val encryptedStorage = remember { EncryptedStorage(context) }
+    val preferencesStore = remember { com.example.data.preferences.AppPreferencesStore(context) }
+    val preferences by preferencesStore.state.collectAsState()
+    DisposableEffect(preferencesStore) { onDispose { preferencesStore.close() } }
     var serverConfig by remember { mutableStateOf(encryptedStorage.loadConfig()) }
 
-    val terminalManager = remember { SshTerminalManager(coroutineScope) }
-    DisposableEffect(terminalManager) {
-        onDispose { terminalManager.sessions.value.forEach { it.destroy() } }
-    }
+    val terminalManager = remember { com.example.data.ssh.SshSessionHost.manager(context) }
     val sftpManager = remember { SftpManager() }
     DisposableEffect(sftpManager) { onDispose { sftpManager.close() } }
     val hermesClient = remember { HermesApiClient() }
     val hermesMessages = remember { mutableStateListOf<ChatMessage>() }
 
-    var selectedTab by remember { mutableStateOf(AppTab.TERMINAL) }
+    var selectedTab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(AppTab.TERMINAL) }
+    val navigationAnimations = rememberNavigationAnimationsEnabled()
+    val pageTransition = updateTransition(selectedTab, label = "main-tab-pages")
+    var settingsSection by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("app") }
+    val transferDestination by com.example.data.transfer.TransferNavigation.destination.collectAsState()
+    LaunchedEffect(transferDestination) { if (transferDestination != null) selectedTab = AppTab.FILES }
     val density = LocalDensity.current
     val imeInsets = WindowInsets.ime
     val keyboardVisible by remember(density) {
         androidx.compose.runtime.derivedStateOf { imeInsets.getBottom(density) > 0 }
     }
     val terminalActive = selectedTab == AppTab.TERMINAL
+    val darkAppearance = IsDarkAppearance
+    var navigationHeight by remember { mutableStateOf(84.dp) }
     val activity = context as? androidx.activity.ComponentActivity
-    DisposableEffect(terminalActive) {
+    DisposableEffect(terminalActive, darkAppearance) {
         activity?.enableEdgeToEdge(
-            statusBarStyle = if (terminalActive) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT) else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
-            navigationBarStyle = if (terminalActive) SystemBarStyle.dark(0xff141729.toInt()) else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+            statusBarStyle = if (terminalActive || darkAppearance) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT) else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, 0xff101722.toInt()),
+            navigationBarStyle = if (terminalActive || darkAppearance) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT) else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, 0xff101722.toInt())
         )
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            activity?.window?.isNavigationBarContrastEnforced = false
+        }
         onDispose { }
     }
 
     // Cross-Integration Handler: Execute CLI command from Hermes directly in Terminal
     val handleExecuteInTerminal: (String) -> Unit = { command ->
-        val active = terminalManager.activeSession.value
-        if (active.connectionState.value !is TerminalConnectionState.Connected) {
-            if (serverConfig.isSshConfigured) {
-                active.connect(serverConfig)
-            } else {
-                active.startSandboxMode()
-            }
-        }
-        active.sendCommand(command)
+        val active = terminalManager.ensureActiveSession()
         selectedTab = AppTab.TERMINAL
-        Toast.makeText(context, "Perintah dikirim ke Terminal", Toast.LENGTH_SHORT).show()
+        coroutineScope.launch {
+            if (active.connectionState.value !is TerminalConnectionState.Connected) {
+                val target = active.lastConfig ?: serverConfig
+                if (target.isSshConfigured) active.connect(target) else active.startSandboxMode()
+            }
+            val connected = withTimeoutOrNull(20_000) {
+                active.connectionState.first { it is TerminalConnectionState.Connected || it is TerminalConnectionState.Error }
+            }
+            if (connected is TerminalConnectionState.Connected) {
+                active.sendCommand(command)
+                Toast.makeText(context, "Perintah dikirim ke Terminal", Toast.LENGTH_SHORT).show()
+            } else Toast.makeText(context, "Perintah belum dikirim. Periksa koneksi terminal.", Toast.LENGTH_LONG).show()
+        }
     }
 
     // Cross-Integration Handler: Analyze file from SFTP with Hermes Agent
@@ -285,7 +344,8 @@ fun MainContentScreen() {
                 userMessage = prompt,
                 history = hermesMessages.dropLast(1),
                 config = serverConfig,
-                useSandboxFallback = !serverConfig.isHermesConfigured
+                useSandboxFallback = !serverConfig.isHermesConfigured,
+                responseInstructions = preferences.responseInstructions()
             )
             result.onSuccess { reply ->
                 hermesMessages.add(ChatMessage(role = "assistant", content = reply))
@@ -307,30 +367,30 @@ fun MainContentScreen() {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = if (terminalActive) Color(0xff141729) else NavyDarkBackground,
-        contentWindowInsets = WindowInsets.statusBars,
-        bottomBar = {
-            if (!keyboardVisible) TailHarnessBottomNav(
-                selectedTab = selectedTab,
-                onTabSelected = { selectedTab = it }
-            )
-        }
+        contentWindowInsets = WindowInsets.statusBars
     ) { innerPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .imePadding()
         ) {
+            Box(Modifier.fillMaxSize()) {
             // Keep Terminal alive: SSH session, PTY buffer, and scroll NEVER disconnect on tab change
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .activeScreen(selectedTab == AppTab.TERMINAL)
+                    .navigationPage(AppTab.TERMINAL, pageTransition, navigationAnimations)
+                    .background(Color(0xff141729))
+                    .navigationContentPadding(navigationHeight, WindowInsets.ime)
             ) {
                 TerminalScreen(
                     terminalManager = terminalManager,
                     serverConfig = serverConfig,
-                    encryptedStorage = encryptedStorage
+                    encryptedStorage = encryptedStorage,
+                    preferences = preferences,
+                    onPreferencesChange = preferencesStore::update,
+                    onOpenSettings = { settingsSection = "app"; selectedTab = AppTab.SETTINGS },
+                    isTabActive = terminalActive
                 )
             }
 
@@ -338,17 +398,31 @@ fun MainContentScreen() {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .activeScreen(selectedTab == AppTab.FILES)
+                    .navigationPage(AppTab.FILES, pageTransition, navigationAnimations)
+                    .background(NavyDarkBackground)
+                    .windowInsetsPadding(WindowInsets.ime)
             ) {
                 FilesScreen(
                     sftpManager = sftpManager,
                     serverConfig = serverConfig,
                     onAskHermesAboutFile = handleAskHermesAboutFile,
                     onOpenSettings = {
+                        settingsSection = "connection"
                         selectedTab = AppTab.SETTINGS
                         serverConfig = encryptedStorage.loadConfig()
                     },
-                    isTabActive = (selectedTab == AppTab.FILES)
+                    isTabActive = (selectedTab == AppTab.FILES),
+                    preferencesStore = preferencesStore,
+                    bottomOverlayInset = if (keyboardVisible) 0.dp else navigationHeight,
+                    transferDestination = transferDestination,
+                    onTransferDestinationHandled = { com.example.data.transfer.TransferNavigation.consumed() },
+                    onSelectTransferProfile = { profileId ->
+                        encryptedStorage.loadProfiles().firstOrNull { it.id == profileId }?.let { profile ->
+                            encryptedStorage.setActiveProfileId(profile.id)
+                            serverConfig = profile.config
+                            profile.config
+                        }
+                    }
                 )
             }
 
@@ -356,7 +430,9 @@ fun MainContentScreen() {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .activeScreen(selectedTab == AppTab.HERMES)
+                    .navigationPage(AppTab.HERMES, pageTransition, navigationAnimations)
+                    .background(NavyDarkBackground)
+                    .navigationContentPadding(navigationHeight, WindowInsets.ime)
             ) {
                 HermesChatScreen(
                     hermesClient = hermesClient,
@@ -367,7 +443,11 @@ fun MainContentScreen() {
                         serverConfig = updatedConfig
                     },
                     onExecuteInTerminal = handleExecuteInTerminal,
-                    messages = hermesMessages
+                    messages = hermesMessages,
+                    preferences = preferences,
+                    onOpenSettings = { settingsSection = "app"; selectedTab = AppTab.SETTINGS },
+                    onOpenConnectionSettings = { settingsSection = "connection"; selectedTab = AppTab.SETTINGS },
+                    onPreferencesUpdated = preferencesStore::update
                 )
             }
 
@@ -375,88 +455,44 @@ fun MainContentScreen() {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .activeScreen(selectedTab == AppTab.SETTINGS)
+                    .navigationPage(AppTab.SETTINGS, pageTransition, navigationAnimations)
+                    .background(NavyDarkBackground)
+                    .windowInsetsPadding(WindowInsets.ime)
             ) {
                 SettingsScreen(
                     encryptedStorage = encryptedStorage,
                     hermesClient = hermesClient,
+                    preferencesStore = preferencesStore,
+                    bottomOverlayInset = if (keyboardVisible) 0.dp else navigationHeight,
+                    section = settingsSection,
+                    onSectionChange = { settingsSection = it },
+                    externalConfig = serverConfig,
                     onConfigUpdated = { updatedConfig ->
                         serverConfig = updatedConfig
                     }
                 )
             }
+            }
+            if (!keyboardVisible) TailHarnessBottomNav(
+                selectedTab = selectedTab,
+                onTabSelected = { selectedTab = it },
+                animationsEnabled = navigationAnimations,
+                modifier = Modifier.align(Alignment.BottomCenter).onSizeChanged { size ->
+                    navigationHeight = with(density) { size.height.toDp() }
+                }
+            )
         }
     }
 }
-
-// Preserve screen state and running requests, but never measure or place hidden screens.
-// Unlike alpha/translation, this avoids relaying out every form during IME animation.
-private fun Modifier.activeScreen(active: Boolean): Modifier = this.then(
-    Modifier.layout { measurable, constraints ->
-        if (active) {
-            val placeable = measurable.measure(constraints)
-            layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
-        } else {
-            layout(0, 0) {}
-        }
-    }
-)
 
 @Composable
 fun TailHarnessBottomNav(
     selectedTab: AppTab,
     onTabSelected: (AppTab) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    animationsEnabled: Boolean = rememberNavigationAnimationsEnabled()
 ) {
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .navigationBarsPadding(),
-        shape = RoundedCornerShape(28.dp),
-        color = Color.White,
-        shadowElevation = 6.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xffE2E8F0))
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceAround,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            for (tab in AppTab.values()) {
-                val isSelected = tab == selectedTab
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 56.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(if (isSelected) Color(0xff3B82F6) else Color.Transparent)
-                        .clickable { onTabSelected(tab) }
-                        .padding(vertical = 8.dp)
-                        .testTag(tab.tag),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Icon(
-                        imageVector = tab.icon,
-                        contentDescription = tab.title,
-                        tint = if (isSelected) Color.White else Color(0xff64748B),
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = tab.title,
-                        color = if (isSelected) Color.White else Color(0xff64748B),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-        }
-    }
+    LiquidGlassBottomNav(selectedTab, onTabSelected, modifier, animationsEnabled = animationsEnabled)
 }
 
 // Retained for test suite compatibility
