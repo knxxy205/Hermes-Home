@@ -39,7 +39,26 @@ class StartupNavigationLabelsTest(unittest.TestCase):
             <node text="Hermes" bounds="[180,720][270,780]" />
             <node text="Pengaturan" bounds="[270,720][360,780]" />
         </hierarchy>''')
-        screens = [lock, challenge, lock, challenge] + [tabs] * 9
+        screens = [lock, challenge, lock, challenge] + [tabs] * 20
+        with TemporaryDirectory() as directory, \
+                patch('smoke_android_startup.hierarchy', side_effect=screens), \
+                patch('smoke_android_startup.time.sleep'), \
+                patch('smoke_android_startup.adb', return_value=SimpleNamespace(stdout='1234', stderr='')) as adb:
+            exercise(Path(directory))
+            pin_entries = [call for call in adb.call_args_list if call.args[:3] == ('shell', 'input', 'text')]
+            self.assertEqual(2, len(pin_entries))
+
+    def test_lock_screen_during_tab_navigation_retries(self):
+        lock = ET.fromstring('<hierarchy><node text="Buka Hermes Home" bounds="[0,20][300,70]" /></hierarchy>')
+        challenge = ET.fromstring('<hierarchy><node class="android.widget.EditText" bounds="[0,20][300,70]" /></hierarchy>')
+        tabs = ET.fromstring('''<hierarchy>
+            <node text="Terminal" bounds="[0,720][90,780]" />
+            <node text="Berkas" bounds="[90,720][180,780]" />
+            <node text="Hermes" bounds="[180,720][270,780]" />
+            <node text="Pengaturan" bounds="[270,720][360,780]" />
+        </hierarchy>''')
+        # First unlock works, then navigating to Settings triggers lock again
+        screens = [lock, challenge] + [tabs] * 2 + [lock, challenge] + [tabs] * 20
         with TemporaryDirectory() as directory, \
                 patch('smoke_android_startup.hierarchy', side_effect=screens), \
                 patch('smoke_android_startup.time.sleep'), \

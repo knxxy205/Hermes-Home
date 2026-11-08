@@ -74,7 +74,7 @@ def exercise(output):
     time.sleep(5)
     assert_running()
     entered_pin = False
-    for attempt in range(6):
+    for attempt in range(12):
         tree = hierarchy(output, 'screen-' + str(attempt))
         assert_running()
         if tree is not None:
@@ -83,12 +83,23 @@ def exercise(output):
                 # Check all four screens after real device-credential authentication.
                 for title in ('Settings', 'Files', 'Hermes', 'Terminal'):
                     tree = hierarchy(output, 'before-' + title.lower())
-                    node = find_tabs(tree)[title]
-                    tap(node)
+                    tabs_now = find_tabs(tree) if tree is not None else {}
+                    if title not in tabs_now:
+                        # Activity recreation or lock screen returned; re-authenticate.
+                        entered_pin = False
+                        break
+                    tap(tabs_now[title])
                     time.sleep(2)
                     assert_running()
-                    hierarchy(output, 'after-' + title.lower())
-                return
+                    tree = hierarchy(output, 'after-' + title.lower())
+                    # If lock screen returned after navigating, restart the loop.
+                    if tree is not None and len(find_tabs(tree)) < len(TAB_LABELS):
+                        nodes_after = list(tree.iter('node'))
+                        if find_unlock_button(nodes_after) is not None:
+                            entered_pin = False
+                            break
+                else:
+                    return
             pin_field = next((n for n in nodes if n.get('class') == 'android.widget.EditText'
                                or n.get('resource-id', '').endswith('/pinEntry')), None)
             if pin_field is None:
